@@ -1,0 +1,36 @@
+.DS_Store
+.claude/
+.derivedData/
+DerivedData/
+tmp/
+**/.git.local-backup-before-github-push/
+
+# Xcode
+build/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift / coverage
+.build/
+Packages/
+*.profraw
+*.profdata
+
+# Web
+website/node_modules/
+website/dist/
+website/.vite/
+
+# Environment
+.env
+.env.*

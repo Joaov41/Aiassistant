@@ -1,0 +1,626 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		C1AB20232D5BD662007CFDBF /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB20222D5BD662007CFDBF /* KeyboardShortcuts */; };
+		C1AB20262D5BD676007CFDBF /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB20252D5BD676007CFDBF /* MarkdownUI */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C1AB1FE52D5BD5C6007CFDBF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C1AB1FCB2D5BD5C5007CFDBF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C1AB1FD22D5BD5C5007CFDBF;
+			remoteInfo = Aiassistant;
+		};
+		C1AB1FEF2D5BD5C6007CFDBF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C1AB1FCB2D5BD5C5007CFDBF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C1AB1FD22D5BD5C5007CFDBF;
+			remoteInfo = Aiassistant;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		C1AB1FD32D5BD5C5007CFDBF /* Aiassistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aiassistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C1AB1FE42D5BD5C6007CFDBF /* AiassistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AiassistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C1AB1FEE2D5BD5C6007CFDBF /* AiassistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AiassistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C1DB6D892DA464700047F789 /* Exceptions for "Aiassistant" folder in "Aiassistant" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				info.plist,
+			);
+			target = C1AB1FD22D5BD5C5007CFDBF /* Aiassistant */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		C1AB1FD52D5BD5C5007CFDBF /* Aiassistant */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C1DB6D892DA464700047F789 /* Exceptions for "Aiassistant" folder in "Aiassistant" target */,
+			);
+			path = Aiassistant;
+			sourceTree = "<group>";
+		};
+		C1AB1FE72D5BD5C6007CFDBF /* AiassistantTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AiassistantTests;
+			sourceTree = "<group>";
+		};
+		C1AB1FF12D5BD5C6007CFDBF /* AiassistantUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AiassistantUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C1AB1FD02D5BD5C5007CFDBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C1AB20232D5BD662007CFDBF /* KeyboardShortcuts in Frameworks */,
+				C1AB20262D5BD676007CFDBF /* MarkdownUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FE12D5BD5C6007CFDBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FEB2D5BD5C6007CFDBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C1AB1FCA2D5BD5C5007CFDBF = {
+			isa = PBXGroup;
+			children = (
+				C1AB1FD52D5BD5C5007CFDBF /* Aiassistant */,
+				C1AB1FE72D5BD5C6007CFDBF /* AiassistantTests */,
+				C1AB1FF12D5BD5C6007CFDBF /* AiassistantUITests */,
+				C1AB1FD42D5BD5C5007CFDBF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C1AB1FD42D5BD5C5007CFDBF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C1AB1FD32D5BD5C5007CFDBF /* Aiassistant.app */,
+				C1AB1FE42D5BD5C6007CFDBF /* AiassistantTests.xctest */,
+				C1AB1FEE2D5BD5C6007CFDBF /* AiassistantUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C1AB1FD22D5BD5C5007CFDBF /* Aiassistant */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1AB1FF82D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "Aiassistant" */;
+			buildPhases = (
+				C1AB1FCF2D5BD5C5007CFDBF /* Sources */,
+				C1AB1FD02D5BD5C5007CFDBF /* Frameworks */,
+				C1AB1FD12D5BD5C5007CFDBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C1AB1FD52D5BD5C5007CFDBF /* Aiassistant */,
+			);
+			name = Aiassistant;
+			packageProductDependencies = (
+				C1AB20222D5BD662007CFDBF /* KeyboardShortcuts */,
+				C1AB20252D5BD676007CFDBF /* MarkdownUI */,
+			);
+			productName = Aiassistant;
+			productReference = C1AB1FD32D5BD5C5007CFDBF /* Aiassistant.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C1AB1FE32D5BD5C6007CFDBF /* AiassistantTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1AB1FFB2D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "AiassistantTests" */;
+			buildPhases = (
+				C1AB1FE02D5BD5C6007CFDBF /* Sources */,
+				C1AB1FE12D5BD5C6007CFDBF /* Frameworks */,
+				C1AB1FE22D5BD5C6007CFDBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C1AB1FE62D5BD5C6007CFDBF /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C1AB1FE72D5BD5C6007CFDBF /* AiassistantTests */,
+			);
+			name = AiassistantTests;
+			packageProductDependencies = (
+			);
+			productName = AiassistantTests;
+			productReference = C1AB1FE42D5BD5C6007CFDBF /* AiassistantTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C1AB1FED2D5BD5C6007CFDBF /* AiassistantUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1AB1FFE2D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "AiassistantUITests" */;
+			buildPhases = (
+				C1AB1FEA2D5BD5C6007CFDBF /* Sources */,
+				C1AB1FEB2D5BD5C6007CFDBF /* Frameworks */,
+				C1AB1FEC2D5BD5C6007CFDBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C1AB1FF02D5BD5C6007CFDBF /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C1AB1FF12D5BD5C6007CFDBF /* AiassistantUITests */,
+			);
+			name = AiassistantUITests;
+			packageProductDependencies = (
+			);
+			productName = AiassistantUITests;
+			productReference = C1AB1FEE2D5BD5C6007CFDBF /* AiassistantUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C1AB1FCB2D5BD5C5007CFDBF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1620;
+				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					C1AB1FD22D5BD5C5007CFDBF = {
+						CreatedOnToolsVersion = 16.2;
+						LastSwiftMigration = 1620;
+					};
+					C1AB1FE32D5BD5C6007CFDBF = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = C1AB1FD22D5BD5C5007CFDBF;
+					};
+					C1AB1FED2D5BD5C6007CFDBF = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = C1AB1FD22D5BD5C5007CFDBF;
+					};
+				};
+			};
+			buildConfigurationList = C1AB1FCE2D5BD5C5007CFDBF /* Build configuration list for PBXProject "Aiassistant" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C1AB1FCA2D5BD5C5007CFDBF;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C1AB20212D5BD662007CFDBF /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				C1AB20242D5BD676007CFDBF /* XCRemoteSwiftPackageReference "MarkdownUI" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C1AB1FD42D5BD5C5007CFDBF /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C1AB1FD22D5BD5C5007CFDBF /* Aiassistant */,
+				C1AB1FE32D5BD5C6007CFDBF /* AiassistantTests */,
+				C1AB1FED2D5BD5C6007CFDBF /* AiassistantUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C1AB1FD12D5BD5C5007CFDBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FE22D5BD5C6007CFDBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FEC2D5BD5C6007CFDBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C1AB1FCF2D5BD5C5007CFDBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FE02D5BD5C6007CFDBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C1AB1FEA2D5BD5C6007CFDBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C1AB1FE62D5BD5C6007CFDBF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C1AB1FD22D5BD5C5007CFDBF /* Aiassistant */;
+			targetProxy = C1AB1FE52D5BD5C6007CFDBF /* PBXContainerItemProxy */;
+		};
+		C1AB1FF02D5BD5C6007CFDBF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C1AB1FD22D5BD5C5007CFDBF /* Aiassistant */;
+			targetProxy = C1AB1FEF2D5BD5C6007CFDBF /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		C1AB1FF62D5BD5C6007CFDBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		C1AB1FF72D5BD5C6007CFDBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		C1AB1FF92D5BD5C6007CFDBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconFilled;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Aiassistant/Aiassistant.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Aiassistant/Preview Content\"";
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				"INFOPLIST_FILE[sdk=*]" = Aiassistant/info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.Aiassistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C1AB1FFA2D5BD5C6007CFDBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconFilled;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Aiassistant/Aiassistant.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Aiassistant/Preview Content\"";
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				"INFOPLIST_FILE[sdk=*]" = Aiassistant/info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.Aiassistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C1AB1FFC2D5BD5C6007CFDBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.AiassistantTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Aiassistant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Aiassistant";
+			};
+			name = Debug;
+		};
+		C1AB1FFD2D5BD5C6007CFDBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.AiassistantTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Aiassistant.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Aiassistant";
+			};
+			name = Release;
+		};
+		C1AB1FFF2D5BD5C6007CFDBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				GENERATE_INFOPLIST_FILE = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.AiassistantUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Aiassistant;
+			};
+			name = Debug;
+		};
+		C1AB20002D5BD5C6007CFDBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HNG8WV554B;
+				GENERATE_INFOPLIST_FILE = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = red.AiassistantUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Aiassistant;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C1AB1FCE2D5BD5C5007CFDBF /* Build configuration list for PBXProject "Aiassistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C1AB1FF62D5BD5C6007CFDBF /* Debug */,
+				C1AB1FF72D5BD5C6007CFDBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C1AB1FF82D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "Aiassistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C1AB1FF92D5BD5C6007CFDBF /* Debug */,
+				C1AB1FFA2D5BD5C6007CFDBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C1AB1FFB2D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "AiassistantTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C1AB1FFC2D5BD5C6007CFDBF /* Debug */,
+				C1AB1FFD2D5BD5C6007CFDBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C1AB1FFE2D5BD5C6007CFDBF /* Build configuration list for PBXNativeTarget "AiassistantUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C1AB1FFF2D5BD5C6007CFDBF /* Debug */,
+				C1AB20002D5BD5C6007CFDBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C1AB20212D5BD662007CFDBF /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.2.4;
+			};
+		};
+		C1AB20242D5BD676007CFDBF /* XCRemoteSwiftPackageReference "MarkdownUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/MarkdownUI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C1AB20222D5BD662007CFDBF /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C1AB20212D5BD662007CFDBF /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+		C1AB20252D5BD676007CFDBF /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C1AB20242D5BD676007CFDBF /* XCRemoteSwiftPackageReference "MarkdownUI" */;
+			productName = MarkdownUI;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = C1AB1FCB2D5BD5C5007CFDBF /* Project object */;
+}
