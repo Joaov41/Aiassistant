@@ -27,6 +27,7 @@ Packages/
 *.profdata
 
 # Web
+website/
 website/node_modules/
 website/dist/
 website/.vite/
