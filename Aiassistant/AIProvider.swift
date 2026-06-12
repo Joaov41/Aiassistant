@@ -37,12 +37,12 @@ enum FMPCCProviderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .fmNotFound:
-            return "The fm CLI was not found at /usr/bin/fm. Install or configure the Apple Foundation Models CLI first."
+            return "Apple PCC is unavailable on this Mac."
         case .invalidImage(let index):
             return "Image \(index + 1) could not be prepared for Apple PCC."
         case .processFailed(_, let output):
             if output.localizedCaseInsensitiveContains("PCC inference is not available") {
-                return "Apple PCC is unavailable from fm CLI: \(output)"
+                return "Apple PCC is unavailable: \(output)"
             }
             if output.localizedCaseInsensitiveContains("quota") || output.localizedCaseInsensitiveContains("rate limit") {
                 return "Apple PCC quota is exhausted or rate-limited: \(output)"
@@ -103,7 +103,7 @@ final class FMPCCProvider: ObservableObject, AIProvider {
 
         var promptText = userPrompt
         if let videos, !videos.isEmpty {
-            promptText += "\n\n(Note: the user attached \(videos.count) video file(s), but video analysis is not supported by the fm CLI path. Answer based on the text and any images, and mention this limitation if relevant.)"
+            promptText += "\n\n(Note: the user attached \(videos.count) video file(s), but video analysis is not supported by this Apple PCC path. Answer based on the text and any images, and mention this limitation if relevant.)"
         }
 
         let transcriptName = existingTranscriptName ?? "Aiassistant-\(UUID().uuidString)"
@@ -180,7 +180,7 @@ final class FMPCCProvider: ObservableObject, AIProvider {
 
     static func availabilityDescription() async -> String {
         guard FileManager.default.isExecutableFile(atPath: fmURL.path) else {
-            return "fm CLI not found at /usr/bin/fm."
+            return "Apple PCC is unavailable on this Mac."
         }
 
         do {

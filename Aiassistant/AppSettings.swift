@@ -20,7 +20,7 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         case .localAppleFoundation:
             return "Apple Foundation Model (On-Device)"
         case .applePCC:
-            return "Apple PCC (fm CLI)"
+            return "Apple PCC"
         }
     }
 
@@ -29,7 +29,7 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         case .localAppleFoundation:
             return "Runs locally via Apple Intelligence. No API key needed, and your data stays on this Mac."
         case .applePCC:
-            return "Uses the local fm CLI with the pcc model. No gateway is needed for this Mac app."
+            return "Uses Apple PCC. No gateway is needed for this Mac app."
         }
     }
 }
