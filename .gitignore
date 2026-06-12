@@ -3,6 +3,7 @@
 .derivedData/
 DerivedData/
 tmp/
+example/
 **/.git.local-backup-before-github-push/
 
 # Xcode
