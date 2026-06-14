@@ -9,7 +9,12 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
     private let model = SystemLanguageModel.default
+    private let pccFallbackProvider: FMPCCProvider?
     private var currentTask: Task<Void, Never>?
+
+    init(pccFallbackProvider: FMPCCProvider? = nil) {
+        self.pccFallbackProvider = pccFallbackProvider
+    }
 
     // MARK: - Availability
 
@@ -55,10 +60,7 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
         }
 
         // The on-device model understands images (macOS 27 multimodal prompts) but not video.
-        var promptText = Self.truncateIfNeeded(userPrompt)
-        if let videos, !videos.isEmpty {
-            promptText += "\n\n(Note: the user attached \(videos.count) video file(s), but video analysis isn't supported by the on-device model. Answer based on the text and any images, and mention this limitation if relevant.)"
-        }
+        let promptText = Self.localPromptText(from: userPrompt, videos: videos)
 
         let attachments = images.compactMap { Self.imageAttachment(from: $0) }
         if attachments.count < images.count {
@@ -83,6 +85,21 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
             // The local foundation model is text-only on output; it never returns generated images.
             return AIResponse(text: response.content, providerName: AIProviderKind.localAppleFoundation.fullDisplayName)
         } catch {
+            if Self.shouldRouteToPCCGateway(for: error), let pccFallbackProvider {
+                let fallbackResponse = try await pccFallbackProvider.processText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    images: images,
+                    videos: videos
+                )
+                return AIResponse(
+                    text: "\(Self.pccFallbackNotice)\n\n\(fallbackResponse.text)",
+                    images: fallbackResponse.images,
+                    providerName: fallbackResponse.providerName,
+                    pccTranscriptName: fallbackResponse.pccTranscriptName
+                )
+            }
+
             throw NSError(
                 domain: "AppleIntelligence",
                 code: -2,
@@ -99,15 +116,11 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
 
     // MARK: - Helpers
 
-    /// Keep prompts comfortably inside the on-device model's context window.
-    /// Web pages and PDFs can be huge; trim the middle to preserve the head and tail.
-    private static func truncateIfNeeded(_ text: String, maxCharacters: Int = 24_000) -> String {
-        guard text.count > maxCharacters else { return text }
-        let headCount = maxCharacters * 3 / 4
-        let tailCount = maxCharacters - headCount
-        let head = text.prefix(headCount)
-        let tail = text.suffix(tailCount)
-        return "\(head)\n\n[... content truncated to fit the on-device model's context window ...]\n\n\(tail)"
+    static let pccFallbackNotice = "Local model context limit reached. Switched to Apple PCC."
+
+    private static func localPromptText(from userPrompt: String, videos: [Data]?) -> String {
+        guard let videos, !videos.isEmpty else { return userPrompt }
+        return "\(userPrompt)\n\n(Note: the user attached \(videos.count) video file(s), but video analysis isn't supported by the on-device model. Answer based on the text and any images, and mention this limitation if relevant.)"
     }
 
     private static func imageAttachment(from data: Data) -> Attachment<ImageAttachmentContent>? {
@@ -116,6 +129,26 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
             return nil
         }
         return Attachment(cgImage)
+    }
+
+    static func shouldRouteToPCCGateway(for error: Error) -> Bool {
+        if let languageModelError = error as? LanguageModelError {
+            if case .contextSizeExceeded = languageModelError {
+                return true
+            }
+        }
+
+        if let generationError = error as? LanguageModelSession.GenerationError {
+            if case .exceededContextWindowSize = generationError {
+                return true
+            }
+        }
+
+        let message = (error as NSError).localizedDescription.lowercased()
+        return message.contains("context")
+            && (message.contains("exceeded")
+                || message.contains("too large")
+                || message.contains("window"))
     }
 
     private static func friendlyMessage(for error: Error) -> String {

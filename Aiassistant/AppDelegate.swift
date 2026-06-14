@@ -134,11 +134,9 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
         print("Showing Main Popup Window")
         appState.activeProvider.cancel()
 
-        let shouldCapture = appState.hasInitializedCapture
         appState.hasInitializedCapture = true
         
-        if shouldCapture,
-           let frontApp = NSWorkspace.shared.frontmostApplication,
+        if let frontApp = NSWorkspace.shared.frontmostApplication,
            frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             appState.previousApplication = frontApp
             appState.captureExternalSelection()

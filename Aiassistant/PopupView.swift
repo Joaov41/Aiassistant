@@ -528,6 +528,9 @@ struct PopupView: View {
         .onChange(of: appState.lastClipboardType) { newValue in
             setAttachmentMessage(for: newValue)
         }
+        .onChange(of: appState.selectedText) { _ in
+            setAttachmentMessage(for: appState.lastClipboardType)
+        }
         .onChange(of: appState.retainedTextContext) { _ in
             pccChatTranscriptName = nil
         }
@@ -715,8 +718,11 @@ struct PopupView: View {
             message = "User attached a Video."
             shouldDisplay = !appState.selectedVideos.isEmpty
         case .text:
-            // Avoid showing a banner for plain text to keep the UI clean on launch.
-            return
+            let preview = appState.selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            message = preview.count > 240
+                ? "Using selected text:\n\n\(String(preview.prefix(240)))..."
+                : "Using selected text:\n\n\(preview)"
+            shouldDisplay = !preview.isEmpty
         case .none:
             return
         }

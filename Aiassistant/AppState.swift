@@ -122,8 +122,9 @@ class AppState: ObservableObject {
     
     // MARK: - Initialization
     private init() {
-        self.appleProvider = AppleIntelligenceProvider()
-        self.pccProvider = FMPCCProvider()
+        let pccProvider = FMPCCProvider()
+        self.pccProvider = pccProvider
+        self.appleProvider = AppleIntelligenceProvider(pccFallbackProvider: pccProvider)
         
         if !appleProvider.isAvailable {
             print("Warning: Apple Intelligence on-device model unavailable — \(appleProvider.availabilityDescription)")
