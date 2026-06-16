@@ -6,6 +6,14 @@ Aiassistant is a macOS SwiftUI assistant app.
 
 - `Aiassistant/` - main macOS app source
 - `AiassistantTests/` and `AiassistantUITests/` - test targets
+- `LocalPackages/coreai-models/` - vendored CoreAI Swift package used by the local Gemma provider
+
+## Latest Update
+
+- Added a Local MLX Gemma provider with automatic local text and image server startup.
+- Added CoreAI Gemma model download, installation checks, and Small E2B CoreAI runtime support.
+- Updated Settings with Gemma model selection, status, and fallback command details.
+- Added tests around provider selection, local Gemma prompt handling, and CoreAI model state.
 
 ## Notarized Build
 

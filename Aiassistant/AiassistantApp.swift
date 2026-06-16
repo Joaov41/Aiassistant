@@ -8,7 +8,7 @@ struct AiassistantApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(appState: appState)
-                .preferredColorScheme(.dark) // Forces dark mode for all SwiftUI views
+                .preferredColorScheme(.dark)
                 .frame(width: 0, height: 0)
                 .hidden()
         }
@@ -18,4 +18,4 @@ struct AiassistantApp: App {
             CommandGroup(replacing: .newItem) {}
         }
     }
-} 
+}

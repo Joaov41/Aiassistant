@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var pccAvailabilityDescription = "Checking PCC availability..."
     @State private var isCheckingPCCAvailability = false
     @State private var pccAvailabilityTask: Task<Void, Never>?
+    @State private var gemmaStatusDescription = ""
 
     init(appState: AppState, showOnlyApiSetup: Bool = false) {
         self._appState = ObservedObject(wrappedValue: appState)
@@ -171,7 +172,7 @@ struct SettingsView: View {
                 .cornerRadius(8)
 
                 HStack(spacing: 10) {
-                    Image(systemName: settings.selectedAIProvider == .applePCC ? "cloud" : "apple.intelligence")
+                    Image(systemName: selectedProviderIcon)
                         .font(.title2)
                         .foregroundColor(.white.opacity(0.9))
                     VStack(alignment: .leading, spacing: 2) {
@@ -190,6 +191,59 @@ struct SettingsView: View {
                     .overlay(.ultraThinMaterial.opacity(0.7))
                     .overlay(Color.black.opacity(0.05)))
                 .cornerRadius(8)
+
+                if settings.selectedAIProvider == .coreAIGemma {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Gemma Model", selection: $settings.selectedCoreAIGemmaModel) {
+                            ForEach(CoreAIGemmaModel.allCases) { model in
+                                Text(model.displayName).tag(model)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .background(Color.black.opacity(0.15)
+                            .overlay(.ultraThinMaterial.opacity(0.7))
+                            .overlay(Color.black.opacity(0.05)))
+                        .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(settings.selectedCoreAIGemmaModel.fullDisplayName)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white.opacity(0.9))
+                            Text(settings.selectedCoreAIGemmaModel.detail)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.6))
+                                .fontWeight(.medium)
+                            Text(settings.selectedCoreAIGemmaModel.mlxModelID)
+                                .font(.caption)
+                                .monospaced()
+                                .foregroundColor(.white.opacity(0.75))
+                                .textSelection(.enabled)
+                        }
+
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                            Text(gemmaStatusDescription)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                                .fontWeight(.medium)
+                        }
+
+                        Text("Fallback command: mlx_lm.server --model \(settings.selectedCoreAIGemmaModel.mlxModelID) --port 8080")
+                            .font(.caption)
+                            .monospaced()
+                            .foregroundColor(.white.opacity(0.65))
+                            .textSelection(.enabled)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.15)
+                        .overlay(.ultraThinMaterial.opacity(0.7))
+                        .overlay(Color.black.opacity(0.05)))
+                    .cornerRadius(8)
+                }
 
                 HStack(spacing: 6) {
                     Circle()
@@ -215,6 +269,18 @@ struct SettingsView: View {
                     }
                     .glassButtonStyle(variant: .v8)
                     .disabled(isCheckingPCCAvailability)
+                }
+
+                if settings.selectedAIProvider == .coreAIGemma {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 8, height: 8)
+                        Text("MLX: \(CoreAIGemmaProvider.availabilityDescription(for: settings.selectedCoreAIGemmaModel))")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                            .fontWeight(.medium)
+                    }
                 }
 
                 if !appState.appleProvider.isAvailable {
@@ -246,14 +312,33 @@ struct SettingsView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             checkPCCAvailability()
+            refreshGemmaStatus()
+            startGemmaServerIfNeeded()
         }
         .onChange(of: settings.selectedAIProvider) { _, _ in
             if settings.selectedAIProvider == .applePCC {
                 checkPCCAvailability()
             }
+            refreshGemmaStatus()
+            startGemmaServerIfNeeded()
+        }
+        .onChange(of: settings.selectedCoreAIGemmaModel) { _, _ in
+            refreshGemmaStatus()
+            startGemmaServerIfNeeded()
         }
         .onDisappear {
             cancelPCCAvailabilityCheck()
+        }
+    }
+
+    private var selectedProviderIcon: String {
+        switch settings.selectedAIProvider {
+        case .localAppleFoundation:
+            return "apple.intelligence"
+        case .applePCC:
+            return "cloud"
+        case .coreAIGemma:
+            return "cpu"
         }
     }
 
@@ -287,6 +372,29 @@ struct SettingsView: View {
         pccAvailabilityTask?.cancel()
         pccAvailabilityTask = nil
         isCheckingPCCAvailability = false
+    }
+
+    private func refreshGemmaStatus() {
+        let model = settings.selectedCoreAIGemmaModel
+        gemmaStatusDescription = "App starts local MLX text and image servers automatically for \(model.displayName)."
+    }
+
+    private func startGemmaServerIfNeeded() {
+        guard settings.selectedAIProvider == .coreAIGemma else {
+            return
+        }
+        Task {
+            do {
+                try await appState.coreAIGemmaProvider.startServerIfNeeded()
+                await MainActor.run {
+                    refreshGemmaStatus()
+                }
+            } catch {
+                await MainActor.run {
+                    gemmaStatusDescription = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func saveSettings() {

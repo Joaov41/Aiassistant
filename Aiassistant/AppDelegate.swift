@@ -30,7 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
     let appState = AppState.shared
 
     // Windows - Keep local references for direct access when needed
-    private weak var settingsWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private(set) weak var popupWindow: PopupWindow?
     private(set) weak var quickActionsWindow: QuickActionsWindow? // Reference for the quick actions window
 
@@ -47,14 +47,111 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
     // Event monitors for keyboard events. Global handles other apps; local handles Aiassistant while it is frontmost.
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
+    private var gemmaWarmupTask: Task<Void, Never>?
+    private var stopMLXServersMenuItem: NSMenuItem?
+    private var isStoppingMLXServers = false
+    private var isQuitting = false
 
     // MARK: - Application Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let launchArguments = ProcessInfo.processInfo.arguments
+
+        NSApp.setActivationPolicy(.accessory)
         NSApp.appearance = NSAppearance(named: .darkAqua)
         NSApp.servicesProvider = self
+
+        if runGemmaImageSelfTestIfRequested() || runGemmaSelfTestIfRequested() {
+            return
+        }
+
         setupMenuBar()
         setupShiftTapMonitor() // Sets up the tap detection
+        warmGemmaServersIfNeeded()
+
+        let shouldShowSettings = launchArguments.contains("--show-settings")
+
+        if shouldShowSettings {
+            DispatchQueue.main.async { [weak self] in
+                self?.showSettings()
+            }
+        }
+    }
+
+    private func warmGemmaServersIfNeeded() {
+        gemmaWarmupTask?.cancel()
+        gemmaWarmupTask = Task { [appState] in
+            do {
+                try await appState.coreAIGemmaProvider.startServerIfNeeded()
+            } catch {
+                print("Warning: Local MLX Gemma servers did not start automatically — \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func runGemmaSelfTestIfRequested() -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--gemma-self-test") else {
+            return false
+        }
+
+        let prompt: String
+        if arguments.indices.contains(index + 1) {
+            prompt = arguments[index + 1]
+        } else {
+            prompt = "Say hello in one short sentence."
+        }
+
+        Task { [appState] in
+            do {
+                AppSettings.shared.selectedAIProvider = .coreAIGemma
+                AppSettings.shared.selectedCoreAIGemmaModel = .gemma4E2BSmall
+                let response = try await appState.coreAIGemmaProvider.processText(
+                    systemPrompt: nil,
+                    userPrompt: prompt,
+                    images: [],
+                    videos: nil
+                )
+                print("[gemma-self-test] \(response.text)")
+                NSApp.terminate(nil)
+            } catch {
+                fputs("[gemma-self-test] ERROR: \(error.localizedDescription)\n", stderr)
+                exit(2)
+            }
+        }
+        return true
+    }
+
+    private func runGemmaImageSelfTestIfRequested() -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--gemma-image-self-test") else {
+            return false
+        }
+
+        let imagePath = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+        let prompt = arguments.indices.contains(index + 2)
+            ? arguments[index + 2]
+            : "Describe the image briefly."
+
+        Task { [appState] in
+            do {
+                AppSettings.shared.selectedAIProvider = .coreAIGemma
+                AppSettings.shared.selectedCoreAIGemmaModel = .gemma4E2BSmall
+                let imageData = try Data(contentsOf: URL(fileURLWithPath: imagePath))
+                let response = try await appState.coreAIGemmaProvider.processText(
+                    systemPrompt: nil,
+                    userPrompt: prompt,
+                    images: [imageData],
+                    videos: nil
+                )
+                print("[gemma-image-self-test] \(response.text)")
+                NSApp.terminate(nil)
+            } catch {
+                fputs("[gemma-image-self-test] ERROR: \(error.localizedDescription)\n", stderr)
+                exit(2)
+            }
+        }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -70,11 +167,21 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
         WindowManager.shared.cleanupAllWindows() // Ask WindowManager to close all windows
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
     // MARK: - Status Bar
 
     private func configureStatusBarItem() {
         guard let button = statusBarItem?.button else { return }
-        button.image = NSImage(systemSymbolName: "pencil.circle", accessibilityDescription: "AI Assistant")
+        if let image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI Assistant") {
+            image.isTemplate = true
+            button.image = image
+            button.imagePosition = .imageLeft
+        }
+        button.title = "AI"
+        button.toolTip = "AI Assistant"
     }
 
     private func setupMenuBar() {
@@ -83,9 +190,14 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
         menu.addItem(NSMenuItem.separator()) // Separator
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
+        let stopServersItem = NSMenuItem(title: "Stop MLX Servers", action: #selector(stopMLXServersFromMenu), keyEquivalent: "")
+        stopServersItem.target = self
+        menu.addItem(stopServersItem)
+        stopMLXServersMenuItem = stopServersItem
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Reset App", action: #selector(resetApp), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitAndStopServers), keyEquivalent: "q"))
         statusBarItem.menu = menu
     }
 
@@ -132,7 +244,7 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
              return
         }
         print("Showing Main Popup Window")
-        appState.activeProvider.cancel()
+        appState.cancelActiveProvider()
 
         appState.hasInitializedCapture = true
         
@@ -187,7 +299,7 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
             closePopupWindow() // Close main popup first
         }
 
-        appState.activeProvider.cancel()
+        appState.cancelActiveProvider()
         let shouldCaptureQuickActions = true
         appState.hasInitializedCapture = true
         
@@ -271,6 +383,48 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
     @objc private func clearClipboardFromMenu() {
         print("Menu Action: Clear Clipboard triggered.")
         appState.clearClipboardData()
+    }
+
+    @objc private func stopMLXServersFromMenu() {
+        guard !isStoppingMLXServers else { return }
+        isStoppingMLXServers = true
+        gemmaWarmupTask?.cancel()
+        gemmaWarmupTask = nil
+        stopMLXServersMenuItem?.isEnabled = false
+        stopMLXServersMenuItem?.title = "Stopping MLX Servers..."
+
+        Task { [weak self, appState] in
+            await appState.coreAIGemmaProvider.stopServers()
+
+            await MainActor.run {
+                self?.isStoppingMLXServers = false
+                self?.stopMLXServersMenuItem?.title = "Stop MLX Servers"
+                self?.stopMLXServersMenuItem?.isEnabled = true
+            }
+        }
+    }
+
+    @objc private func quitAndStopServers() {
+        guard !isQuitting else { return }
+        isQuitting = true
+        gemmaWarmupTask?.cancel()
+
+        Task { [appState] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await appState.coreAIGemmaProvider.stopServers()
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+                await group.next()
+                group.cancelAll()
+            }
+
+            await MainActor.run {
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     // MARK: - Reset

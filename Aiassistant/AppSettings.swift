@@ -3,6 +3,7 @@ import Foundation
 enum AIProviderKind: String, CaseIterable, Identifiable {
     case localAppleFoundation = "local_apple_foundation"
     case applePCC = "apple_pcc"
+    case coreAIGemma = "core_ai_gemma"
 
     var id: String { rawValue }
 
@@ -12,6 +13,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Local"
         case .applePCC:
             return "Apple PCC"
+        case .coreAIGemma:
+            return "Local MLX"
         }
     }
 
@@ -21,6 +24,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Apple Foundation Model (On-Device)"
         case .applePCC:
             return "Apple PCC"
+        case .coreAIGemma:
+            return "Local MLX Gemma"
         }
     }
 
@@ -30,13 +35,15 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Runs locally via Apple Intelligence. No API key needed, and your data stays on this Mac."
         case .applePCC:
             return "Uses Apple PCC. No gateway is needed for this Mac app."
+        case .coreAIGemma:
+            return "Uses a local MLX server on this Mac. Full document context is sent to the local endpoint."
         }
     }
 }
 
 // A singleton for app-wide settings that wraps UserDefaults access
 class AppSettings: ObservableObject {
-    static let shared = AppSettings()
+    nonisolated(unsafe) static let shared = AppSettings()
     
     private let defaults = UserDefaults.standard
 
@@ -55,6 +62,10 @@ class AppSettings: ObservableObject {
 
     @Published var selectedAIProvider: AIProviderKind {
         didSet { defaults.set(selectedAIProvider.rawValue, forKey: "selected_ai_provider") }
+    }
+
+    @Published var selectedCoreAIGemmaModel: CoreAIGemmaModel {
+        didSet { defaults.set(selectedCoreAIGemmaModel.rawValue, forKey: "selected_core_ai_gemma_model") }
     }
 
     // Custom Quick Actions
@@ -81,6 +92,9 @@ class AppSettings: ObservableObject {
         self.selectedAIProvider = AIProviderKind(
             rawValue: defaults.string(forKey: "selected_ai_provider") ?? ""
         ) ?? .localAppleFoundation
+        self.selectedCoreAIGemmaModel = CoreAIGemmaModel(
+            rawValue: defaults.string(forKey: "selected_core_ai_gemma_model") ?? ""
+        ) ?? .gemma4_12B
         self.customQuickActions = defaults.stringArray(forKey: "custom_quick_actions") ?? []
 
         // HotKey

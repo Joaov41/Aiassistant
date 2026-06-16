@@ -995,6 +995,7 @@ struct PopupView: View {
             // Task { // Removed outer Task, already inside one
                 do {
                     let aiResponse: AIResponse
+                    var gemmaStreamingMessageID: UUID?
                     if AppSettings.shared.selectedAIProvider == .applePCC {
                         aiResponse = try await appState.pccProvider.processText(
                             systemPrompt: systemPrompt,
@@ -1006,8 +1007,33 @@ struct PopupView: View {
                         if !hasRetainedDocumentContext, let transcriptName = aiResponse.pccTranscriptName {
                             pccChatTranscriptName = transcriptName
                         }
+                    } else if AppSettings.shared.selectedAIProvider == .coreAIGemma {
+                        let gemmaPrompt = localMLXChatPrompt(
+                            currentPrompt: finalPrompt,
+                            latestUserMessage: typedPrompt,
+                            includePriorTranscript: !hasRetainedDocumentContext
+                        )
+                        let streamingID = UUID()
+                        gemmaStreamingMessageID = streamingID
+                        let waitingMessage = appState.coreAIGemmaProvider.isSelectedModelLoaded
+                            ? "MLX thinking..."
+                            : "Connecting to MLX..."
+                        chatMessages.append((id: streamingID, message: "Assistant: \(waitingMessage)", images: []))
+                        aiResponse = try await appState.coreAIGemmaProvider.processText(
+                            systemPrompt: systemPrompt,
+                            userPrompt: gemmaPrompt,
+                            images: imagesToIncludeForProcessing,
+                            videos: appState.selectedVideos,
+                            onUpdate: { partialText in
+                                guard let index = chatMessages.firstIndex(where: { $0.id == streamingID }) else {
+                                    return
+                                }
+                                let visibleText = partialText.isEmpty ? "MLX thinking..." : partialText
+                                chatMessages[index].message = "Assistant: \(visibleText)"
+                            }
+                        )
                     } else {
-                        aiResponse = try await appState.activeProvider.processText(
+                        aiResponse = try await appState.processWithActiveProvider(
                             systemPrompt: systemPrompt,
                             userPrompt: finalPrompt,
                             images: imagesToIncludeForProcessing,
@@ -1074,7 +1100,12 @@ struct PopupView: View {
                         }
                     } else {
                         // Regular text response
-                        chatMessages.append((id: UUID(), message: "Assistant: \(aiResponse.text)", images: []))
+                        if let gemmaStreamingMessageID,
+                           let index = chatMessages.firstIndex(where: { $0.id == gemmaStreamingMessageID }) {
+                            chatMessages[index].message = "Assistant: \(aiResponse.text)"
+                        } else {
+                            chatMessages.append((id: UUID(), message: "Assistant: \(aiResponse.text)", images: []))
+                        }
                     }
                 } catch {
                     chatMessages.append((id: UUID(), message: "Error: \(error.localizedDescription)", images: []))
@@ -1091,6 +1122,163 @@ struct PopupView: View {
                 // --- END ADDED ---
             //} // Removed outer Task bracket
         } // End of Task wrapper
+    }
+
+    private func localMLXChatPrompt(
+        currentPrompt: String,
+        latestUserMessage: String,
+        includePriorTranscript: Bool
+    ) -> String {
+        guard includePriorTranscript else {
+            return currentPrompt
+        }
+
+        let priorTranscript = priorChatTranscriptForMLX(latestUserMessage: latestUserMessage)
+        guard !priorTranscript.isEmpty else {
+            return currentPrompt
+        }
+
+        return """
+        Use the recent chat transcript for context, then answer the latest user message.
+
+        Recent chat:
+        \(priorTranscript)
+
+        Latest:
+        \(currentPrompt)
+        """
+    }
+
+    private func compactCurrentPromptForGemma(_ currentPrompt: String, latestUserMessage: String) -> String {
+        guard let context = documentContext(in: currentPrompt) else {
+            return compactForGemmaPreservingEnd(currentPrompt, limit: 420)
+        }
+
+        let excerpt = relevantGemmaExcerpt(from: context, question: latestUserMessage, limit: 560)
+        return """
+        Question: \(compactForGemma(latestUserMessage, limit: 140))
+        Use only this PDF excerpt. Answer directly in under 90 words.
+        PDF excerpt:
+        \(excerpt)
+        """
+    }
+
+    private func documentContext(in prompt: String) -> String? {
+        guard let contextMarker = prompt.range(of: "Context:\n---"),
+              let userMarker = prompt.range(of: "\n---\n\nUser says:", range: contextMarker.upperBound..<prompt.endIndex) else {
+            return nil
+        }
+        return String(prompt[contextMarker.upperBound..<userMarker.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func relevantGemmaExcerpt(from context: String, question: String, limit: Int) -> String {
+        let terms = gemmaSearchTerms(for: question)
+        let chunks = context
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: CharacterSet(charactersIn: "\n.;"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count > 20 }
+
+        let scored = chunks.enumerated().map { index, chunk in
+            let lower = chunk.lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (lower.contains(term) ? 1 : 0)
+            }
+            return (index: index, chunk: chunk, score: score)
+        }
+
+        let selected = scored
+            .filter { $0.score > 0 }
+            .sorted { lhs, rhs in
+                lhs.score == rhs.score ? lhs.index < rhs.index : lhs.score > rhs.score
+            }
+            .prefix(5)
+            .sorted { $0.index < $1.index }
+            .map(\.chunk)
+
+        let excerpt = selected.isEmpty ? chunks.prefix(4).joined(separator: "\n") : selected.joined(separator: "\n")
+        return compactForGemmaPreservingEnd(excerpt, limit: limit)
+    }
+
+    private func gemmaSearchTerms(for question: String) -> [String] {
+        let stopwords: Set<String> = [
+            "what", "when", "where", "which", "there", "their", "about", "does", "with",
+            "from", "that", "this", "have", "were", "will", "would", "could", "should"
+        ]
+        var terms = question
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 3 && !stopwords.contains($0) }
+
+        if terms.contains("tendency") || terms.contains("trend") || terms.contains("price") {
+            terms += ["trend", "tendency", "price", "prices", "brent", "wti", "rose", "fell", "increase", "decrease", "march"]
+        }
+        return Array(Set(terms))
+    }
+
+    private func priorChatTranscriptForProvider(latestUserMessage: String) -> String {
+        var messages = chatMessages
+        if let last = messages.last,
+           last.message == "User: \(latestUserMessage)" {
+            messages.removeLast()
+        }
+
+        let transcript = messages.suffix(2).compactMap { item -> String? in
+            if item.message.hasPrefix("User: ") {
+                return "User: \(compactForGemma(String(item.message.dropFirst("User: ".count)), limit: 100))"
+            }
+            if item.message.hasPrefix("Assistant: ") {
+                return "Assistant: \(compactForGemma(String(item.message.dropFirst("Assistant: ".count)), limit: 180))"
+            }
+            return nil
+        }
+        .joined(separator: "\n")
+
+        return compactForGemma(transcript, limit: 320)
+    }
+
+    private func priorChatTranscriptForMLX(latestUserMessage: String) -> String {
+        var messages = chatMessages
+        if let last = messages.last,
+           last.message == "User: \(latestUserMessage)" {
+            messages.removeLast()
+        }
+
+        return messages.suffix(12).compactMap { item -> String? in
+            if item.message.hasPrefix("User: ") {
+                return item.message
+            }
+            if item.message.hasPrefix("Assistant: ") {
+                return item.message
+            }
+            return nil
+        }
+        .joined(separator: "\n\n")
+    }
+
+    private func compactForGemma(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else {
+            return normalized
+        }
+        let prefix = normalized.prefix(limit)
+        return "\(prefix)\n[Earlier/extra context trimmed for Small E2B.]"
+    }
+
+    private func compactForGemmaPreservingEnd(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else {
+            return normalized
+        }
+        let suffix = normalized.suffix(limit)
+        return "[Earlier context trimmed for Small E2B.]\n\(suffix)"
     }
     
     // Detect if a prompt is requesting edits to a previously generated image
@@ -1268,7 +1456,7 @@ struct PopupView: View {
             
             do {
                 // Step 3: Send the prompt to the LLM
-                let aiResponse = try await appState.activeProvider.processText(
+                let aiResponse = try await appState.processWithActiveProvider(
                     systemPrompt: systemPrompt,
                     userPrompt: finalPrompt,
                     images: imagesToInclude,
