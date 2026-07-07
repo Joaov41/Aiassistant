@@ -1,6 +1,4 @@
 import Foundation
-import AppKit
-import CoreGraphics
 import FoundationModels
 
 /// AI provider backed by Apple's on-device Foundation Model (FoundationModels framework, macOS 27 API).
@@ -59,21 +57,15 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
             )
         }
 
-        // The on-device model understands images (macOS 27 multimodal prompts) but not video.
-        let promptText = Self.localPromptText(from: userPrompt, videos: videos)
-
-        let attachments = images.compactMap { Self.imageAttachment(from: $0) }
-        if attachments.count < images.count {
-            print("AppleIntelligenceProvider: \(images.count - attachments.count) image(s) could not be decoded and were skipped.")
+        let promptText = Self.localPromptText(from: userPrompt, images: images, videos: videos)
+        if !images.isEmpty {
+            print("AppleIntelligenceProvider: skipped \(images.count) image attachment(s) because this FoundationModels runtime does not expose the image attachment API.")
         }
 
         let session = LanguageModelSession(model: model, instructions: systemPrompt)
 
         let prompt = Prompt {
             promptText
-            for attachment in attachments {
-                attachment
-            }
         }
 
         do {
@@ -118,17 +110,16 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
 
     static let pccFallbackNotice = "Local model context limit reached. Switched to Apple PCC."
 
-    private static func localPromptText(from userPrompt: String, videos: [Data]?) -> String {
-        guard let videos, !videos.isEmpty else { return userPrompt }
-        return "\(userPrompt)\n\n(Note: the user attached \(videos.count) video file(s), but video analysis isn't supported by the on-device model. Answer based on the text and any images, and mention this limitation if relevant.)"
-    }
-
-    private static func imageAttachment(from data: Data) -> Attachment<ImageAttachmentContent>? {
-        guard let nsImage = NSImage(data: data),
-              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return nil
+    private static func localPromptText(from userPrompt: String, images: [Data], videos: [Data]?) -> String {
+        var notes: [String] = []
+        if !images.isEmpty {
+            notes.append("the user attached \(images.count) image file(s), but image analysis is temporarily disabled for the on-device model on this FoundationModels runtime")
         }
-        return Attachment(cgImage)
+        if let videos, !videos.isEmpty {
+            notes.append("the user attached \(videos.count) video file(s), but video analysis isn't supported by the on-device model")
+        }
+        guard !notes.isEmpty else { return userPrompt }
+        return "\(userPrompt)\n\n(Note: \(notes.joined(separator: "; ")). Answer based on the text, and mention this limitation if relevant.)"
     }
 
     static func shouldRouteToPCCGateway(for error: Error) -> Bool {

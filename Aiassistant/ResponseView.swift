@@ -159,7 +159,7 @@ final class ResponseViewModel: ObservableObject {
                     If an amount, currency, date, or field is not explicitly present, say it is not found.
                     Do not infer subtotals, taxes, totals, conversions, or missing values unless the user explicitly asks you to calculate from listed amounts.
                     """
-                    response = try await appState.activeProvider.processText(
+                    response = try await appState.processWithActiveProvider(
                         systemPrompt: strictSystemPrompt,
                         userPrompt: combinedPrompt,
                         images: [],

@@ -100,20 +100,15 @@ struct PopupView: View {
 	                    } else if msg.hasPrefix("Assistant: ") {
 	                        let response = msg.replacingOccurrences(of: "Assistant: ", with: "")
 	                        VStack(alignment: .leading, spacing: 8) {
-	                            // Text content
+                            // Text content
 		                            ZStack(alignment: .topTrailing) {
-		                                SelectableAssistantReplyText(
+		                                AssistantMarkdownReplyView(
 		                                    text: response,
-		                                    height: Binding(
-		                                        get: { replyTextHeights[item.id, default: 24] },
-		                                        set: { replyTextHeights[item.id] = $0 }
-		                                    ),
 		                                    onSelectionChange: { selection in
 		                                        selectedReplyMessageID = selection.isEmpty ? nil : item.id
 		                                        selectedReplyText = selection
 		                                    }
 		                                )
-		                                .frame(height: replyTextHeights[item.id, default: 24], alignment: .leading)
 		                                
 		                                if selectedReplyMessageID == item.id && !selectedReplyText.isEmpty {
 		                                    Button("Ask") {
@@ -995,6 +990,7 @@ struct PopupView: View {
             // Task { // Removed outer Task, already inside one
                 do {
                     let aiResponse: AIResponse
+                    var gemmaStreamingMessageID: UUID?
                     if AppSettings.shared.selectedAIProvider == .applePCC {
                         aiResponse = try await appState.pccProvider.processText(
                             systemPrompt: systemPrompt,
@@ -1006,8 +1002,33 @@ struct PopupView: View {
                         if !hasRetainedDocumentContext, let transcriptName = aiResponse.pccTranscriptName {
                             pccChatTranscriptName = transcriptName
                         }
+                    } else if AppSettings.shared.selectedAIProvider == .coreAIGemma {
+                        let gemmaPrompt = localMLXChatPrompt(
+                            currentPrompt: finalPrompt,
+                            latestUserMessage: typedPrompt,
+                            includePriorTranscript: !hasRetainedDocumentContext
+                        )
+                        let streamingID = UUID()
+                        gemmaStreamingMessageID = streamingID
+                        let waitingMessage = appState.coreAIGemmaProvider.isSelectedModelLoaded
+                            ? "MLX thinking..."
+                            : "Connecting to MLX..."
+                        chatMessages.append((id: streamingID, message: "Assistant: \(waitingMessage)", images: []))
+                        aiResponse = try await appState.coreAIGemmaProvider.processText(
+                            systemPrompt: systemPrompt,
+                            userPrompt: gemmaPrompt,
+                            images: imagesToIncludeForProcessing,
+                            videos: appState.selectedVideos,
+                            onUpdate: { partialText in
+                                guard let index = chatMessages.firstIndex(where: { $0.id == streamingID }) else {
+                                    return
+                                }
+                                let visibleText = partialText.isEmpty ? "MLX thinking..." : partialText
+                                chatMessages[index].message = "Assistant: \(visibleText)"
+                            }
+                        )
                     } else {
-                        aiResponse = try await appState.activeProvider.processText(
+                        aiResponse = try await appState.processWithActiveProvider(
                             systemPrompt: systemPrompt,
                             userPrompt: finalPrompt,
                             images: imagesToIncludeForProcessing,
@@ -1074,7 +1095,12 @@ struct PopupView: View {
                         }
                     } else {
                         // Regular text response
-                        chatMessages.append((id: UUID(), message: "Assistant: \(aiResponse.text)", images: []))
+                        if let gemmaStreamingMessageID,
+                           let index = chatMessages.firstIndex(where: { $0.id == gemmaStreamingMessageID }) {
+                            chatMessages[index].message = "Assistant: \(aiResponse.text)"
+                        } else {
+                            chatMessages.append((id: UUID(), message: "Assistant: \(aiResponse.text)", images: []))
+                        }
                     }
                 } catch {
                     chatMessages.append((id: UUID(), message: "Error: \(error.localizedDescription)", images: []))
@@ -1091,6 +1117,163 @@ struct PopupView: View {
                 // --- END ADDED ---
             //} // Removed outer Task bracket
         } // End of Task wrapper
+    }
+
+    private func localMLXChatPrompt(
+        currentPrompt: String,
+        latestUserMessage: String,
+        includePriorTranscript: Bool
+    ) -> String {
+        guard includePriorTranscript else {
+            return currentPrompt
+        }
+
+        let priorTranscript = priorChatTranscriptForMLX(latestUserMessage: latestUserMessage)
+        guard !priorTranscript.isEmpty else {
+            return currentPrompt
+        }
+
+        return """
+        Use the recent chat transcript for context, then answer the latest user message.
+
+        Recent chat:
+        \(priorTranscript)
+
+        Latest:
+        \(currentPrompt)
+        """
+    }
+
+    private func compactCurrentPromptForGemma(_ currentPrompt: String, latestUserMessage: String) -> String {
+        guard let context = documentContext(in: currentPrompt) else {
+            return compactForGemmaPreservingEnd(currentPrompt, limit: 420)
+        }
+
+        let excerpt = relevantGemmaExcerpt(from: context, question: latestUserMessage, limit: 560)
+        return """
+        Question: \(compactForGemma(latestUserMessage, limit: 140))
+        Use only this PDF excerpt. Answer directly in under 90 words.
+        PDF excerpt:
+        \(excerpt)
+        """
+    }
+
+    private func documentContext(in prompt: String) -> String? {
+        guard let contextMarker = prompt.range(of: "Context:\n---"),
+              let userMarker = prompt.range(of: "\n---\n\nUser says:", range: contextMarker.upperBound..<prompt.endIndex) else {
+            return nil
+        }
+        return String(prompt[contextMarker.upperBound..<userMarker.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func relevantGemmaExcerpt(from context: String, question: String, limit: Int) -> String {
+        let terms = gemmaSearchTerms(for: question)
+        let chunks = context
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: CharacterSet(charactersIn: "\n.;"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count > 20 }
+
+        let scored = chunks.enumerated().map { index, chunk in
+            let lower = chunk.lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (lower.contains(term) ? 1 : 0)
+            }
+            return (index: index, chunk: chunk, score: score)
+        }
+
+        let selected = scored
+            .filter { $0.score > 0 }
+            .sorted { lhs, rhs in
+                lhs.score == rhs.score ? lhs.index < rhs.index : lhs.score > rhs.score
+            }
+            .prefix(5)
+            .sorted { $0.index < $1.index }
+            .map(\.chunk)
+
+        let excerpt = selected.isEmpty ? chunks.prefix(4).joined(separator: "\n") : selected.joined(separator: "\n")
+        return compactForGemmaPreservingEnd(excerpt, limit: limit)
+    }
+
+    private func gemmaSearchTerms(for question: String) -> [String] {
+        let stopwords: Set<String> = [
+            "what", "when", "where", "which", "there", "their", "about", "does", "with",
+            "from", "that", "this", "have", "were", "will", "would", "could", "should"
+        ]
+        var terms = question
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 3 && !stopwords.contains($0) }
+
+        if terms.contains("tendency") || terms.contains("trend") || terms.contains("price") {
+            terms += ["trend", "tendency", "price", "prices", "brent", "wti", "rose", "fell", "increase", "decrease", "march"]
+        }
+        return Array(Set(terms))
+    }
+
+    private func priorChatTranscriptForProvider(latestUserMessage: String) -> String {
+        var messages = chatMessages
+        if let last = messages.last,
+           last.message == "User: \(latestUserMessage)" {
+            messages.removeLast()
+        }
+
+        let transcript = messages.suffix(2).compactMap { item -> String? in
+            if item.message.hasPrefix("User: ") {
+                return "User: \(compactForGemma(String(item.message.dropFirst("User: ".count)), limit: 100))"
+            }
+            if item.message.hasPrefix("Assistant: ") {
+                return "Assistant: \(compactForGemma(String(item.message.dropFirst("Assistant: ".count)), limit: 180))"
+            }
+            return nil
+        }
+        .joined(separator: "\n")
+
+        return compactForGemma(transcript, limit: 320)
+    }
+
+    private func priorChatTranscriptForMLX(latestUserMessage: String) -> String {
+        var messages = chatMessages
+        if let last = messages.last,
+           last.message == "User: \(latestUserMessage)" {
+            messages.removeLast()
+        }
+
+        return messages.suffix(12).compactMap { item -> String? in
+            if item.message.hasPrefix("User: ") {
+                return item.message
+            }
+            if item.message.hasPrefix("Assistant: ") {
+                return item.message
+            }
+            return nil
+        }
+        .joined(separator: "\n\n")
+    }
+
+    private func compactForGemma(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else {
+            return normalized
+        }
+        let prefix = normalized.prefix(limit)
+        return "\(prefix)\n[Earlier/extra context trimmed for Small E2B.]"
+    }
+
+    private func compactForGemmaPreservingEnd(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else {
+            return normalized
+        }
+        let suffix = normalized.suffix(limit)
+        return "[Earlier context trimmed for Small E2B.]\n\(suffix)"
     }
     
     // Detect if a prompt is requesting edits to a previously generated image
@@ -1268,7 +1451,7 @@ struct PopupView: View {
             
             do {
                 // Step 3: Send the prompt to the LLM
-                let aiResponse = try await appState.activeProvider.processText(
+                let aiResponse = try await appState.processWithActiveProvider(
                     systemPrompt: systemPrompt,
                     userPrompt: finalPrompt,
                     images: imagesToInclude,
@@ -1547,10 +1730,456 @@ struct AppSelectionView_Previews: PreviewProvider {
 }
 // --- END ADDED ---
 
+private enum AssistantMarkdownBlock {
+    case text(String)
+    case heading(level: Int, text: String)
+    case list(AssistantMarkdownList)
+    case table(AssistantMarkdownTable)
+    case image(AssistantMarkdownImage)
+}
+
+private struct AssistantMarkdownList {
+    let items: [AssistantMarkdownListItem]
+}
+
+private struct AssistantMarkdownListItem {
+    let marker: String
+    let text: String
+}
+
+private struct AssistantMarkdownTable {
+    let headers: [String]
+    let rows: [[String]]
+}
+
+private struct AssistantMarkdownImage {
+    let altText: String
+    let source: String
+}
+
+private enum AssistantMarkdownParser {
+    static func parse(_ text: String) -> [AssistantMarkdownBlock] {
+        let lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+
+        var blocks: [AssistantMarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                index += 1
+                continue
+            }
+
+            if let heading = parseHeading(line) {
+                blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if let image = parseImage(line) {
+                blocks.append(.image(image))
+                index += 1
+                continue
+            }
+
+            if let list = parseList(lines, startingAt: index) {
+                blocks.append(.list(list.value))
+                index = list.nextIndex
+                continue
+            }
+
+            if let table = parseTable(lines, startingAt: index) {
+                blocks.append(.table(table.value))
+                index = table.nextIndex
+                continue
+            }
+
+            var textLines: [String] = []
+            while index < lines.count {
+                let current = lines[index]
+                if current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    break
+                }
+                if isKnownBlockStart(lines, at: index) {
+                    break
+                }
+                textLines.append(current)
+                index += 1
+            }
+
+            let value = textLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                blocks.append(.text(value))
+            } else {
+                index += 1
+            }
+        }
+
+        return blocks
+    }
+
+    private static func isKnownBlockStart(_ lines: [String], at index: Int) -> Bool {
+        guard index < lines.count else { return false }
+        return parseHeading(lines[index]) != nil
+            || parseImage(lines[index]) != nil
+            || parseListItem(lines[index]) != nil
+            || parseTable(lines, startingAt: index) != nil
+    }
+
+    private static func parseHeading(_ line: String) -> (level: Int, text: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        var currentIndex = trimmed.startIndex
+
+        while currentIndex < trimmed.endIndex,
+              trimmed[currentIndex] == "#",
+              level < 6 {
+            level += 1
+            currentIndex = trimmed.index(after: currentIndex)
+        }
+
+        guard level > 0,
+              currentIndex < trimmed.endIndex,
+              trimmed[currentIndex].isWhitespace else {
+            return nil
+        }
+
+        let textStart = trimmed.index(after: currentIndex)
+        let headingText = String(trimmed[textStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return headingText.isEmpty ? nil : (level, headingText)
+    }
+
+    private static func parseImage(_ line: String) -> AssistantMarkdownImage? {
+        guard let match = firstMatch(in: line.trimmingCharacters(in: .whitespacesAndNewlines), pattern: #"^!\[([^\]]*)\]\(([^)]+)\)$"#),
+              match.count == 3 else {
+            return nil
+        }
+
+        return AssistantMarkdownImage(altText: match[1], source: match[2])
+    }
+
+    private static func parseList(_ lines: [String], startingAt index: Int) -> (value: AssistantMarkdownList, nextIndex: Int)? {
+        var items: [AssistantMarkdownListItem] = []
+        var currentIndex = index
+
+        while currentIndex < lines.count {
+            guard let item = parseListItem(lines[currentIndex]) else {
+                break
+            }
+            items.append(item)
+            currentIndex += 1
+        }
+
+        return items.isEmpty ? nil : (AssistantMarkdownList(items: items), currentIndex)
+    }
+
+    private static func parseListItem(_ line: String) -> AssistantMarkdownListItem? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        if let unordered = firstMatch(in: trimmed, pattern: #"^([*+-])\s+(.+)$"#),
+           unordered.count == 3 {
+            return AssistantMarkdownListItem(marker: "•", text: unordered[2])
+        }
+
+        if let ordered = firstMatch(in: trimmed, pattern: #"^(\d+[.)])\s+(.+)$"#),
+           ordered.count == 3 {
+            return AssistantMarkdownListItem(marker: ordered[1], text: ordered[2])
+        }
+
+        return nil
+    }
+
+    private static func parseTable(_ lines: [String], startingAt index: Int) -> (value: AssistantMarkdownTable, nextIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headers = pipeCells(in: lines[index]),
+              let separator = pipeCells(in: lines[index + 1]),
+              headers.count > 1,
+              separator.count == headers.count,
+              separator.allSatisfy(isTableSeparatorCell) else {
+            return nil
+        }
+
+        var rows: [[String]] = []
+        var currentIndex = index + 2
+
+        while currentIndex < lines.count {
+            guard let cells = pipeCells(in: lines[currentIndex]),
+                  !cells.allSatisfy(isTableSeparatorCell) else {
+                break
+            }
+            rows.append(cells)
+            currentIndex += 1
+        }
+
+        return (AssistantMarkdownTable(headers: headers, rows: rows), currentIndex)
+    }
+
+    private static func pipeCells(in line: String) -> [String]? {
+        var value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.contains("|") else { return nil }
+
+        if value.hasPrefix("|") {
+            value.removeFirst()
+        }
+        if value.hasSuffix("|") {
+            value.removeLast()
+        }
+
+        let cells = value
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        return cells.count > 1 ? cells : nil
+    }
+
+    private static func isTableSeparatorCell(_ value: String) -> Bool {
+        firstMatch(in: value, pattern: #"^:?-{3,}:?$"#) != nil
+    }
+
+    private static func firstMatch(in value: String, pattern: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsRange = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = regex.firstMatch(in: value, range: nsRange) else {
+            return nil
+        }
+
+        return (0..<match.numberOfRanges).map { index in
+            let range = match.range(at: index)
+            guard let swiftRange = Range(range, in: value) else {
+                return ""
+            }
+            return String(value[swiftRange])
+        }
+    }
+}
+
+private struct AssistantMarkdownReplyView: View {
+    let text: String
+    let onSelectionChange: (String) -> Void
+
+    private var blocks: [AssistantMarkdownBlock] {
+        AssistantMarkdownParser.parse(text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: AssistantMarkdownBlock) -> some View {
+        switch block {
+        case .text(let value):
+            SelectableInlineMarkdownText(text: value, onSelectionChange: onSelectionChange)
+
+        case .heading(let level, let value):
+            SelectableInlineMarkdownText(
+                text: value,
+                fontSize: headingFontSize(for: level),
+                fontWeight: .semibold,
+                onSelectionChange: onSelectionChange
+            )
+
+        case .list(let list):
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(list.items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(item.marker)
+                            .font(.system(size: NSFont.systemFontSize, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: markerWidth(for: item.marker), alignment: .trailing)
+
+                        SelectableInlineMarkdownText(text: item.text, onSelectionChange: onSelectionChange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+        case .table(let table):
+            tableView(table)
+
+        case .image(let image):
+            AssistantMarkdownImageView(image: image)
+        }
+    }
+
+    private func tableView(_ table: AssistantMarkdownTable) -> some View {
+        let widths = tableColumnWidths(table)
+
+        return ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                tableRow(table.headers, widths: widths, isHeader: true)
+
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    tableRow(row, widths: widths, isHeader: false)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.75)
+            )
+        }
+    }
+
+    private func tableRow(_ row: [String], widths: [CGFloat], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(widths.indices, id: \.self) { index in
+                SelectableInlineMarkdownText(
+                    text: index < row.count ? row[index] : "",
+                    fontWeight: isHeader ? .semibold : .bold,
+                    onSelectionChange: onSelectionChange
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(width: widths[index], alignment: .leading)
+                .background(isHeader ? Color.white.opacity(0.12) : Color.white.opacity(0.04))
+                .overlay(alignment: .trailing) {
+                    if index < widths.count - 1 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 0.5)
+                    }
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(height: 0.5)
+        }
+    }
+
+    private func tableColumnWidths(_ table: AssistantMarkdownTable) -> [CGFloat] {
+        table.headers.indices.map { index in
+            let values = [table.headers[index]] + table.rows.map { row in
+                index < row.count ? row[index] : ""
+            }
+            let characterCount = values.map(\.count).max() ?? 0
+            return min(max(CGFloat(characterCount) * 7 + 28, 84), 220)
+        }
+    }
+
+    private func markerWidth(for marker: String) -> CGFloat {
+        marker == "•" ? 16 : 30
+    }
+
+    private func headingFontSize(for level: Int) -> CGFloat {
+        switch level {
+        case 1:
+            return NSFont.systemFontSize + 5
+        case 2:
+            return NSFont.systemFontSize + 2
+        default:
+            return NSFont.systemFontSize
+        }
+    }
+}
+
+private struct AssistantMarkdownImageView: View {
+    let image: AssistantMarkdownImage
+
+    var body: some View {
+        Group {
+            if let url = remoteURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .frame(maxWidth: 360, minHeight: 120)
+                    case .success(let loadedImage):
+                        styledImage(loadedImage)
+                    case .failure:
+                        imageFallback
+                    @unknown default:
+                        imageFallback
+                    }
+                }
+            } else if let nsImage = localImage {
+                styledImage(Image(nsImage: nsImage))
+            } else {
+                imageFallback
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var remoteURL: URL? {
+        guard let url = URL(string: image.source),
+              ["http", "https"].contains(url.scheme?.lowercased()) else {
+            return nil
+        }
+        return url
+    }
+
+    private var localImage: NSImage? {
+        if let url = URL(string: image.source), url.isFileURL {
+            return NSImage(contentsOf: url)
+        }
+
+        let expandedPath = NSString(string: image.source).expandingTildeInPath
+        return NSImage(contentsOfFile: expandedPath)
+    }
+
+    private var imageFallback: some View {
+        Text(image.altText.isEmpty ? "Image could not be displayed" : image.altText)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+    }
+
+    private func styledImage(_ image: Image) -> some View {
+        image
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 360)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+            )
+    }
+}
+
+private struct SelectableInlineMarkdownText: View {
+    let text: String
+    var fontSize: CGFloat = NSFont.systemFontSize
+    var fontWeight: NSFont.Weight = .bold
+    let onSelectionChange: (String) -> Void
+
+    @State private var height: CGFloat = 24
+
+    var body: some View {
+        SelectableAssistantReplyText(
+            text: text,
+            height: $height,
+            onSelectionChange: onSelectionChange,
+            fontSize: fontSize,
+            fontWeight: fontWeight
+        )
+        .frame(height: height, alignment: .leading)
+    }
+}
+
 private struct SelectableAssistantReplyText: NSViewRepresentable {
     let text: String
     @Binding var height: CGFloat
     let onSelectionChange: (String) -> Void
+    var fontSize: CGFloat = NSFont.systemFontSize
+    var fontWeight: NSFont.Weight = .bold
+    var textColor: NSColor = .labelColor
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelectionChange: onSelectionChange)
@@ -1561,10 +2190,11 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isRichText = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.textColor = .labelColor
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
+        textView.textColor = textColor
+        textView.font = .systemFont(ofSize: fontSize, weight: fontWeight)
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
@@ -1577,10 +2207,11 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.onSelectionChange = onSelectionChange
-        if textView.string != text {
-            textView.string = text
-            textView.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
-            textView.textColor = .labelColor
+        let renderKey = "\(text)|\(fontSize)|\(fontWeight)"
+        if context.coordinator.renderKey != renderKey {
+            textView.textStorage?.setAttributedString(inlineAttributedString())
+            textView.textColor = textColor
+            context.coordinator.renderKey = renderKey
         }
 
         DispatchQueue.main.async {
@@ -1602,8 +2233,45 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
         }
     }
 
+    private func inlineAttributedString() -> NSAttributedString {
+        let parsed = (try? AttributedString(
+            markdown: text,
+            options: .init(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                failurePolicy: .returnPartiallyParsedIfPossible
+            )
+        )) ?? AttributedString(text)
+
+        let mutable = NSMutableAttributedString(attributedString: NSAttributedString(parsed))
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard mutable.length > 0 else {
+            return mutable
+        }
+
+        mutable.addAttribute(.foregroundColor, value: textColor, range: fullRange)
+        mutable.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            let existingFont = value as? NSFont
+            let traits = existingFont?.fontDescriptor.symbolicTraits ?? []
+            let resolvedWeight: NSFont.Weight = traits.contains(.bold) ? .bold : fontWeight
+            var resolvedFont = NSFont.systemFont(ofSize: fontSize, weight: resolvedWeight)
+
+            if traits.contains(.italic) {
+                resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .italicFontMask)
+            }
+
+            mutable.addAttribute(.font, value: resolvedFont, range: range)
+        }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
+
+        return mutable
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelectionChange: (String) -> Void
+        var renderKey: String?
 
         init(onSelectionChange: @escaping (String) -> Void) {
             self.onSelectionChange = onSelectionChange

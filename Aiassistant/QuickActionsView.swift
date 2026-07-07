@@ -663,7 +663,7 @@ struct QuickActionsView: View {
             }
 
             do {
-                let response = try await appState.activeProvider.processText(
+                let response = try await appState.processWithActiveProvider(
                     systemPrompt: writingOption.systemPrompt,
                     userPrompt: userPrompt,
                     images: currentContextType == .image ? await appState.selectedImages : [],
