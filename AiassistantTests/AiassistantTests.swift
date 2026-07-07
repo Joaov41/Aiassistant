@@ -131,8 +131,11 @@ struct AiassistantTests {
     }
 
     @Test func coreAIGemmaModelsMapToMLXModelIDs() async throws {
-        #expect(CoreAIGemmaModel.gemma4E2BSmall.mlxModelID == "mlx-community/gemma-4-e2b-it-4bit")
+        #expect(CoreAIGemmaModel.gemma4E2BSmall.mlxModelID.contains("gemma-4-e2b-it-4bit"))
         #expect(CoreAIGemmaModel.gemma3_4BSmall.mlxModelID == "mlx-community/gemma-4-e4b-it-4bit")
+        #expect(CoreAIGemmaModel.gemma3_4BSmall.mlxVisionModelID == "mlx-community/gemma-4-e4b-it-4bit")
+        #expect(CoreAIGemmaModel.gemma3_4BSmall.usesVLMForText)
+        #expect(CoreAIGemmaModel.gemma3_4BSmall.fallbackServerCommand.hasPrefix("mlx_vlm.server"))
         #expect(CoreAIGemmaModel.gemma4_12B.mlxModelID == "mlx-community/gemma-4-12B-it-4bit")
         #expect(CoreAIGemmaModel.gemma4_31B.mlxModelID == "mlx-community/gemma-4-31b-it-4bit")
     }
@@ -161,8 +164,8 @@ struct AiassistantTests {
         )
 
         #expect(!prompt.contains("User:"))
-        #expect(prompt.contains("text-only"))
-        #expect(prompt.contains("1 image attachment"))
+        #expect(!prompt.contains("text-only"))
+        #expect(!prompt.contains("1 image attachment"))
         #expect(prompt.contains("1 video attachment"))
     }
 

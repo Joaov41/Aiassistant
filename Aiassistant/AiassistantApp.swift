@@ -18,4 +18,4 @@ struct AiassistantApp: App {
             CommandGroup(replacing: .newItem) {}
         }
     }
-}
+} 

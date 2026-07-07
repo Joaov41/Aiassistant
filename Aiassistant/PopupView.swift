@@ -100,20 +100,15 @@ struct PopupView: View {
 	                    } else if msg.hasPrefix("Assistant: ") {
 	                        let response = msg.replacingOccurrences(of: "Assistant: ", with: "")
 	                        VStack(alignment: .leading, spacing: 8) {
-	                            // Text content
+                            // Text content
 		                            ZStack(alignment: .topTrailing) {
-		                                SelectableAssistantReplyText(
+		                                AssistantMarkdownReplyView(
 		                                    text: response,
-		                                    height: Binding(
-		                                        get: { replyTextHeights[item.id, default: 24] },
-		                                        set: { replyTextHeights[item.id] = $0 }
-		                                    ),
 		                                    onSelectionChange: { selection in
 		                                        selectedReplyMessageID = selection.isEmpty ? nil : item.id
 		                                        selectedReplyText = selection
 		                                    }
 		                                )
-		                                .frame(height: replyTextHeights[item.id, default: 24], alignment: .leading)
 		                                
 		                                if selectedReplyMessageID == item.id && !selectedReplyText.isEmpty {
 		                                    Button("Ask") {
@@ -1735,10 +1730,456 @@ struct AppSelectionView_Previews: PreviewProvider {
 }
 // --- END ADDED ---
 
+private enum AssistantMarkdownBlock {
+    case text(String)
+    case heading(level: Int, text: String)
+    case list(AssistantMarkdownList)
+    case table(AssistantMarkdownTable)
+    case image(AssistantMarkdownImage)
+}
+
+private struct AssistantMarkdownList {
+    let items: [AssistantMarkdownListItem]
+}
+
+private struct AssistantMarkdownListItem {
+    let marker: String
+    let text: String
+}
+
+private struct AssistantMarkdownTable {
+    let headers: [String]
+    let rows: [[String]]
+}
+
+private struct AssistantMarkdownImage {
+    let altText: String
+    let source: String
+}
+
+private enum AssistantMarkdownParser {
+    static func parse(_ text: String) -> [AssistantMarkdownBlock] {
+        let lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+
+        var blocks: [AssistantMarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                index += 1
+                continue
+            }
+
+            if let heading = parseHeading(line) {
+                blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if let image = parseImage(line) {
+                blocks.append(.image(image))
+                index += 1
+                continue
+            }
+
+            if let list = parseList(lines, startingAt: index) {
+                blocks.append(.list(list.value))
+                index = list.nextIndex
+                continue
+            }
+
+            if let table = parseTable(lines, startingAt: index) {
+                blocks.append(.table(table.value))
+                index = table.nextIndex
+                continue
+            }
+
+            var textLines: [String] = []
+            while index < lines.count {
+                let current = lines[index]
+                if current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    break
+                }
+                if isKnownBlockStart(lines, at: index) {
+                    break
+                }
+                textLines.append(current)
+                index += 1
+            }
+
+            let value = textLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                blocks.append(.text(value))
+            } else {
+                index += 1
+            }
+        }
+
+        return blocks
+    }
+
+    private static func isKnownBlockStart(_ lines: [String], at index: Int) -> Bool {
+        guard index < lines.count else { return false }
+        return parseHeading(lines[index]) != nil
+            || parseImage(lines[index]) != nil
+            || parseListItem(lines[index]) != nil
+            || parseTable(lines, startingAt: index) != nil
+    }
+
+    private static func parseHeading(_ line: String) -> (level: Int, text: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        var currentIndex = trimmed.startIndex
+
+        while currentIndex < trimmed.endIndex,
+              trimmed[currentIndex] == "#",
+              level < 6 {
+            level += 1
+            currentIndex = trimmed.index(after: currentIndex)
+        }
+
+        guard level > 0,
+              currentIndex < trimmed.endIndex,
+              trimmed[currentIndex].isWhitespace else {
+            return nil
+        }
+
+        let textStart = trimmed.index(after: currentIndex)
+        let headingText = String(trimmed[textStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return headingText.isEmpty ? nil : (level, headingText)
+    }
+
+    private static func parseImage(_ line: String) -> AssistantMarkdownImage? {
+        guard let match = firstMatch(in: line.trimmingCharacters(in: .whitespacesAndNewlines), pattern: #"^!\[([^\]]*)\]\(([^)]+)\)$"#),
+              match.count == 3 else {
+            return nil
+        }
+
+        return AssistantMarkdownImage(altText: match[1], source: match[2])
+    }
+
+    private static func parseList(_ lines: [String], startingAt index: Int) -> (value: AssistantMarkdownList, nextIndex: Int)? {
+        var items: [AssistantMarkdownListItem] = []
+        var currentIndex = index
+
+        while currentIndex < lines.count {
+            guard let item = parseListItem(lines[currentIndex]) else {
+                break
+            }
+            items.append(item)
+            currentIndex += 1
+        }
+
+        return items.isEmpty ? nil : (AssistantMarkdownList(items: items), currentIndex)
+    }
+
+    private static func parseListItem(_ line: String) -> AssistantMarkdownListItem? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        if let unordered = firstMatch(in: trimmed, pattern: #"^([*+-])\s+(.+)$"#),
+           unordered.count == 3 {
+            return AssistantMarkdownListItem(marker: "•", text: unordered[2])
+        }
+
+        if let ordered = firstMatch(in: trimmed, pattern: #"^(\d+[.)])\s+(.+)$"#),
+           ordered.count == 3 {
+            return AssistantMarkdownListItem(marker: ordered[1], text: ordered[2])
+        }
+
+        return nil
+    }
+
+    private static func parseTable(_ lines: [String], startingAt index: Int) -> (value: AssistantMarkdownTable, nextIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headers = pipeCells(in: lines[index]),
+              let separator = pipeCells(in: lines[index + 1]),
+              headers.count > 1,
+              separator.count == headers.count,
+              separator.allSatisfy(isTableSeparatorCell) else {
+            return nil
+        }
+
+        var rows: [[String]] = []
+        var currentIndex = index + 2
+
+        while currentIndex < lines.count {
+            guard let cells = pipeCells(in: lines[currentIndex]),
+                  !cells.allSatisfy(isTableSeparatorCell) else {
+                break
+            }
+            rows.append(cells)
+            currentIndex += 1
+        }
+
+        return (AssistantMarkdownTable(headers: headers, rows: rows), currentIndex)
+    }
+
+    private static func pipeCells(in line: String) -> [String]? {
+        var value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.contains("|") else { return nil }
+
+        if value.hasPrefix("|") {
+            value.removeFirst()
+        }
+        if value.hasSuffix("|") {
+            value.removeLast()
+        }
+
+        let cells = value
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        return cells.count > 1 ? cells : nil
+    }
+
+    private static func isTableSeparatorCell(_ value: String) -> Bool {
+        firstMatch(in: value, pattern: #"^:?-{3,}:?$"#) != nil
+    }
+
+    private static func firstMatch(in value: String, pattern: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsRange = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = regex.firstMatch(in: value, range: nsRange) else {
+            return nil
+        }
+
+        return (0..<match.numberOfRanges).map { index in
+            let range = match.range(at: index)
+            guard let swiftRange = Range(range, in: value) else {
+                return ""
+            }
+            return String(value[swiftRange])
+        }
+    }
+}
+
+private struct AssistantMarkdownReplyView: View {
+    let text: String
+    let onSelectionChange: (String) -> Void
+
+    private var blocks: [AssistantMarkdownBlock] {
+        AssistantMarkdownParser.parse(text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: AssistantMarkdownBlock) -> some View {
+        switch block {
+        case .text(let value):
+            SelectableInlineMarkdownText(text: value, onSelectionChange: onSelectionChange)
+
+        case .heading(let level, let value):
+            SelectableInlineMarkdownText(
+                text: value,
+                fontSize: headingFontSize(for: level),
+                fontWeight: .semibold,
+                onSelectionChange: onSelectionChange
+            )
+
+        case .list(let list):
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(list.items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(item.marker)
+                            .font(.system(size: NSFont.systemFontSize, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: markerWidth(for: item.marker), alignment: .trailing)
+
+                        SelectableInlineMarkdownText(text: item.text, onSelectionChange: onSelectionChange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+        case .table(let table):
+            tableView(table)
+
+        case .image(let image):
+            AssistantMarkdownImageView(image: image)
+        }
+    }
+
+    private func tableView(_ table: AssistantMarkdownTable) -> some View {
+        let widths = tableColumnWidths(table)
+
+        return ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                tableRow(table.headers, widths: widths, isHeader: true)
+
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    tableRow(row, widths: widths, isHeader: false)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.75)
+            )
+        }
+    }
+
+    private func tableRow(_ row: [String], widths: [CGFloat], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(widths.indices, id: \.self) { index in
+                SelectableInlineMarkdownText(
+                    text: index < row.count ? row[index] : "",
+                    fontWeight: isHeader ? .semibold : .bold,
+                    onSelectionChange: onSelectionChange
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(width: widths[index], alignment: .leading)
+                .background(isHeader ? Color.white.opacity(0.12) : Color.white.opacity(0.04))
+                .overlay(alignment: .trailing) {
+                    if index < widths.count - 1 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 0.5)
+                    }
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(height: 0.5)
+        }
+    }
+
+    private func tableColumnWidths(_ table: AssistantMarkdownTable) -> [CGFloat] {
+        table.headers.indices.map { index in
+            let values = [table.headers[index]] + table.rows.map { row in
+                index < row.count ? row[index] : ""
+            }
+            let characterCount = values.map(\.count).max() ?? 0
+            return min(max(CGFloat(characterCount) * 7 + 28, 84), 220)
+        }
+    }
+
+    private func markerWidth(for marker: String) -> CGFloat {
+        marker == "•" ? 16 : 30
+    }
+
+    private func headingFontSize(for level: Int) -> CGFloat {
+        switch level {
+        case 1:
+            return NSFont.systemFontSize + 5
+        case 2:
+            return NSFont.systemFontSize + 2
+        default:
+            return NSFont.systemFontSize
+        }
+    }
+}
+
+private struct AssistantMarkdownImageView: View {
+    let image: AssistantMarkdownImage
+
+    var body: some View {
+        Group {
+            if let url = remoteURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .frame(maxWidth: 360, minHeight: 120)
+                    case .success(let loadedImage):
+                        styledImage(loadedImage)
+                    case .failure:
+                        imageFallback
+                    @unknown default:
+                        imageFallback
+                    }
+                }
+            } else if let nsImage = localImage {
+                styledImage(Image(nsImage: nsImage))
+            } else {
+                imageFallback
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var remoteURL: URL? {
+        guard let url = URL(string: image.source),
+              ["http", "https"].contains(url.scheme?.lowercased()) else {
+            return nil
+        }
+        return url
+    }
+
+    private var localImage: NSImage? {
+        if let url = URL(string: image.source), url.isFileURL {
+            return NSImage(contentsOf: url)
+        }
+
+        let expandedPath = NSString(string: image.source).expandingTildeInPath
+        return NSImage(contentsOfFile: expandedPath)
+    }
+
+    private var imageFallback: some View {
+        Text(image.altText.isEmpty ? "Image could not be displayed" : image.altText)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+    }
+
+    private func styledImage(_ image: Image) -> some View {
+        image
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 360)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+            )
+    }
+}
+
+private struct SelectableInlineMarkdownText: View {
+    let text: String
+    var fontSize: CGFloat = NSFont.systemFontSize
+    var fontWeight: NSFont.Weight = .bold
+    let onSelectionChange: (String) -> Void
+
+    @State private var height: CGFloat = 24
+
+    var body: some View {
+        SelectableAssistantReplyText(
+            text: text,
+            height: $height,
+            onSelectionChange: onSelectionChange,
+            fontSize: fontSize,
+            fontWeight: fontWeight
+        )
+        .frame(height: height, alignment: .leading)
+    }
+}
+
 private struct SelectableAssistantReplyText: NSViewRepresentable {
     let text: String
     @Binding var height: CGFloat
     let onSelectionChange: (String) -> Void
+    var fontSize: CGFloat = NSFont.systemFontSize
+    var fontWeight: NSFont.Weight = .bold
+    var textColor: NSColor = .labelColor
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelectionChange: onSelectionChange)
@@ -1749,10 +2190,11 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isRichText = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.textColor = .labelColor
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
+        textView.textColor = textColor
+        textView.font = .systemFont(ofSize: fontSize, weight: fontWeight)
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
@@ -1765,10 +2207,11 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.onSelectionChange = onSelectionChange
-        if textView.string != text {
-            textView.string = text
-            textView.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .bold)
-            textView.textColor = .labelColor
+        let renderKey = "\(text)|\(fontSize)|\(fontWeight)"
+        if context.coordinator.renderKey != renderKey {
+            textView.textStorage?.setAttributedString(inlineAttributedString())
+            textView.textColor = textColor
+            context.coordinator.renderKey = renderKey
         }
 
         DispatchQueue.main.async {
@@ -1790,8 +2233,45 @@ private struct SelectableAssistantReplyText: NSViewRepresentable {
         }
     }
 
+    private func inlineAttributedString() -> NSAttributedString {
+        let parsed = (try? AttributedString(
+            markdown: text,
+            options: .init(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                failurePolicy: .returnPartiallyParsedIfPossible
+            )
+        )) ?? AttributedString(text)
+
+        let mutable = NSMutableAttributedString(attributedString: NSAttributedString(parsed))
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard mutable.length > 0 else {
+            return mutable
+        }
+
+        mutable.addAttribute(.foregroundColor, value: textColor, range: fullRange)
+        mutable.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            let existingFont = value as? NSFont
+            let traits = existingFont?.fontDescriptor.symbolicTraits ?? []
+            let resolvedWeight: NSFont.Weight = traits.contains(.bold) ? .bold : fontWeight
+            var resolvedFont = NSFont.systemFont(ofSize: fontSize, weight: resolvedWeight)
+
+            if traits.contains(.italic) {
+                resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .italicFontMask)
+            }
+
+            mutable.addAttribute(.font, value: resolvedFont, range: range)
+        }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
+
+        return mutable
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelectionChange: (String) -> Void
+        var renderKey: String?
 
         init(onSelectionChange: @escaping (String) -> Void) {
             self.onSelectionChange = onSelectionChange

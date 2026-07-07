@@ -50,7 +50,7 @@ enum CoreAIGemmaModel: String, CaseIterable, Identifiable {
     var mlxModelID: String {
         switch self {
         case .gemma4E2BSmall:
-            return "mlx-community/gemma-4-e2b-it-4bit"
+            return Self.workingE2BSnapshotPath ?? "mlx-community/gemma-4-e2b-it-4bit"
         case .gemma3_4BSmall:
             return "mlx-community/gemma-4-e4b-it-4bit"
         case .gemma4_12B:
@@ -60,8 +60,37 @@ enum CoreAIGemmaModel: String, CaseIterable, Identifiable {
         }
     }
 
+    var usesVLMForText: Bool {
+        switch self {
+        case .gemma3_4BSmall:
+            return true
+        case .gemma4E2BSmall, .gemma4_12B, .gemma4_31B:
+            return false
+        }
+    }
+
+    private static var workingE2BSnapshotPath: String? {
+        let candidates = [
+            "/Volumes/Tools/huggingface/hub/models--mlx-community--gemma-4-e2b-it-4bit/snapshots/99d9a53ff828d365a8ecae538e45f80a08d612cd",
+            "\(NSHomeDirectory())/.cache/huggingface/hub/models--mlx-community--gemma-4-e2b-it-4bit/snapshots/99d9a53ff828d365a8ecae538e45f80a08d612cd"
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
     var mlxVisionModelID: String {
-        "mlx-community/gemma-4-E2B-it-qat-4bit"
+        switch self {
+        case .gemma3_4BSmall:
+            return "mlx-community/gemma-4-e4b-it-4bit"
+        case .gemma4E2BSmall, .gemma4_12B, .gemma4_31B:
+            return "mlx-community/gemma-4-E2B-it-qat-4bit"
+        }
+    }
+
+    var fallbackServerCommand: String {
+        if usesVLMForText {
+            return "mlx_vlm.server --model \(mlxVisionModelID) --port 8081"
+        }
+        return "mlx_lm.server --model \(mlxModelID) --port 8080"
     }
 
     var repo: String {

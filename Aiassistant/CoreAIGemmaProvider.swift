@@ -51,7 +51,12 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
 
     private let baseURL = URL(string: "http://127.0.0.1:8080/v1")!
     private let visionBaseURL = URL(string: "http://127.0.0.1:8081/v1")!
+    private let pccFallbackProvider: FMPCCProvider?
     private var currentTask: Task<String, Error>?
+
+    init(pccFallbackProvider: FMPCCProvider? = nil) {
+        self.pccFallbackProvider = pccFallbackProvider
+    }
 
     var selectedModel: CoreAIGemmaModel {
         AppSettings.shared.selectedCoreAIGemmaModel
@@ -71,12 +76,19 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
     }
 
     static func availabilityDescription(for model: CoreAIGemmaModel) -> String {
-        "Uses local MLX servers. Text uses \(model.mlxModelID); images use \(model.mlxVisionModelID)."
+        if model.usesVLMForText {
+            return "Uses local MLX VLM server. Text and images use \(model.mlxVisionModelID)."
+        }
+        return "Uses local MLX servers. Text uses \(model.mlxModelID); images use \(model.mlxVisionModelID)."
     }
 
     func startServerIfNeeded() async throws {
         let model = selectedModel
         LocalMLXLaunchLog.write("warming text and image servers for \(model.rawValue)")
+        if model.usesVLMForText {
+            try await LocalMLXVLMServerLauncher.shared.ensureRunning(model: model, baseURL: visionBaseURL)
+            return
+        }
         async let textServer: Void = LocalMLXServerLauncher.shared.ensureRunning(model: model, baseURL: baseURL)
         async let visionServer: Void = LocalMLXVLMServerLauncher.shared.ensureRunning(model: model, baseURL: visionBaseURL)
         _ = try await (textServer, visionServer)
@@ -137,7 +149,7 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         )
         let model = selectedModel
         let generationTask = Task {
-            if images.isEmpty {
+            if images.isEmpty && !model.usesVLMForText {
                 try await LocalMLXServerLauncher.shared.ensureRunning(model: model, baseURL: self.baseURL)
                 return try await self.generate(prompt: prompt, model: model, streamingUpdate: streamingUpdate)
             } else {
@@ -148,16 +160,35 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         currentTask = generationTask
         defer { currentTask = nil }
 
-        let response = try await withTaskCancellationHandler {
-            try await generationTask.value
-        } onCancel: {
-            generationTask.cancel()
-        }
+        do {
+            let response = try await withTaskCancellationHandler {
+                try await generationTask.value
+            } onCancel: {
+                generationTask.cancel()
+            }
 
-        return AIResponse(
-            text: response,
-            providerName: "\(AIProviderKind.coreAIGemma.fullDisplayName) (\(model.fullDisplayName))"
-        )
+            return AIResponse(
+                text: response,
+                providerName: "\(AIProviderKind.coreAIGemma.fullDisplayName) (\(model.fullDisplayName))"
+            )
+        } catch {
+            if Self.shouldRouteToPCCGateway(for: error), let pccFallbackProvider {
+                generationTask.cancel()
+                let fallbackResponse = try await pccFallbackProvider.processText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    images: images,
+                    videos: videos
+                )
+                return AIResponse(
+                    text: "\(Self.pccFallbackNotice)\n\n\(fallbackResponse.text)",
+                    images: fallbackResponse.images,
+                    providerName: fallbackResponse.providerName,
+                    pccTranscriptName: fallbackResponse.pccTranscriptName
+                )
+            }
+            throw error
+        }
     }
 
     func cancel() {
@@ -184,6 +215,59 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
             )
         }
         return pieces.joined(separator: "\n\n")
+    }
+
+    static let pccFallbackNotice = "Local MLX context limit reached. Switched to Apple PCC."
+
+    static func shouldRouteToPCCGateway(for error: Error) -> Bool {
+        if let gemmaError = error as? CoreAIGemmaProviderError {
+            switch gemmaError {
+            case .promptTooLong:
+                return true
+            case .mlxServerError(let message):
+                return isContextLimitMessage(message)
+            default:
+                break
+            }
+        }
+
+        let message = (error as NSError).localizedDescription
+        return isContextLimitMessage(message)
+    }
+
+    private static func isContextLimitMessage(_ message: String) -> Bool {
+        let lowercased = message.lowercased()
+        let contextTerms = [
+            "context",
+            "context window",
+            "max context",
+            "maximum context",
+            "sequence length",
+            "max sequence",
+            "max_seq",
+            "max position",
+            "max_position",
+            "prompt is too long",
+            "input is too long",
+            "input length",
+            "too many tokens",
+            "token indices sequence length",
+            "kv cache"
+        ]
+        let overflowTerms = [
+            "exceed",
+            "exceeded",
+            "exceeds",
+            "too long",
+            "larger than",
+            "greater than",
+            "maximum",
+            "limit",
+            "out of range"
+        ]
+
+        return contextTerms.contains { lowercased.contains($0) }
+            && overflowTerms.contains { lowercased.contains($0) }
     }
 
     private func generateVision(
@@ -227,9 +311,13 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         request.httpBody = try JSONEncoder().encode(body)
 
         if streamingUpdate != nil {
-            return try await streamCompletion(request: request, streamingUpdate: streamingUpdate)
+            return try await streamCompletion(
+                request: request,
+                unavailableBaseURL: visionBaseURL,
+                streamingUpdate: streamingUpdate
+            )
         }
-        return try await nonStreamingCompletion(request: request)
+        return try await nonStreamingCompletion(request: request, unavailableBaseURL: visionBaseURL)
     }
 
     private func generate(
@@ -240,7 +328,7 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         var request = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10
+        request.timeoutInterval = 600
 
         let body = ChatCompletionRequest(
             model: model.mlxModelID,
@@ -254,16 +342,25 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         request.httpBody = try JSONEncoder().encode(body)
 
         if streamingUpdate != nil {
-            return try await streamCompletion(request: request, streamingUpdate: streamingUpdate)
+            return try await streamCompletion(
+                request: request,
+                unavailableBaseURL: baseURL,
+                streamingUpdate: streamingUpdate
+            )
         }
-        return try await nonStreamingCompletion(request: request)
+        return try await nonStreamingCompletion(request: request, unavailableBaseURL: baseURL)
     }
 
-    private func nonStreamingCompletion(request: URLRequest) async throws -> String {
+    private func nonStreamingCompletion(request: URLRequest, unavailableBaseURL: URL) async throws -> String {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             try validateHTTPResponse(response, data: data)
-            let decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            let decoded: ChatCompletionResponse
+            do {
+                decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            } catch {
+                throw CoreAIGemmaProviderError.mlxServerError(Self.invalidResponseMessage(from: data, decodingError: error))
+            }
             let rawText = decoded.choices.first?.message?.content ?? decoded.choices.first?.message?.reasoning
             guard let text = rawText?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else {
@@ -272,13 +369,16 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
             return text
         } catch let error as CoreAIGemmaProviderError {
             throw error
+        } catch let error as URLError {
+            throw Self.transportError(from: error, unavailableBaseURL: unavailableBaseURL)
         } catch {
-            throw CoreAIGemmaProviderError.mlxServerUnavailable(baseURL)
+            throw CoreAIGemmaProviderError.mlxServerError("Local MLX request failed: \(error.localizedDescription)")
         }
     }
 
     private func streamCompletion(
         request: URLRequest,
+        unavailableBaseURL: URL,
         streamingUpdate: (@MainActor (String) -> Void)?
     ) async throws -> String {
         do {
@@ -298,7 +398,12 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
                 guard let data = payload.data(using: .utf8) else {
                     continue
                 }
-                let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: data)
+                let chunk: ChatCompletionChunk
+                do {
+                    chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: data)
+                } catch {
+                    throw CoreAIGemmaProviderError.mlxServerError(Self.invalidResponseMessage(from: data, decodingError: error))
+                }
                 guard let delta = chunk.choices.first?.delta?.content ?? chunk.choices.first?.delta?.reasoning,
                       !delta.isEmpty else {
                     continue
@@ -315,9 +420,34 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
             throw error
         } catch is CancellationError {
             throw CoreAIGemmaProviderError.cancelled
+        } catch let error as URLError {
+            throw Self.transportError(from: error, unavailableBaseURL: unavailableBaseURL)
         } catch {
-            throw CoreAIGemmaProviderError.mlxServerUnavailable(baseURL)
+            throw CoreAIGemmaProviderError.mlxServerError("Local MLX streaming request failed: \(error.localizedDescription)")
         }
+    }
+
+    private static func transportError(from error: URLError, unavailableBaseURL: URL) -> CoreAIGemmaProviderError {
+        switch error.code {
+        case .timedOut:
+            return .mlxServerError("Local MLX generation timed out. The model may still be loading or this Mac may need more time for the first response.")
+        case .cancelled:
+            return .cancelled
+        case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
+            return .mlxServerUnavailable(unavailableBaseURL)
+        default:
+            return .mlxServerError("Local MLX connection failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func invalidResponseMessage(from data: Data, decodingError: Error) -> String {
+        let raw = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let raw, !raw.isEmpty {
+            let snippet = raw.count > 500 ? String(raw.prefix(500)) + "..." : raw
+            return "Local MLX server returned an unreadable response: \(snippet)"
+        }
+        return "Local MLX server returned an unreadable response: \(decodingError.localizedDescription)"
     }
 
     private func validateHTTPResponse(_ response: URLResponse, data: Data?) throws {

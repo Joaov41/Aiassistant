@@ -9,8 +9,6 @@
 /* Begin PBXBuildFile section */
 		C1AB20232D5BD662007CFDBF /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB20222D5BD662007CFDBF /* KeyboardShortcuts */; };
 		C1AB20262D5BD676007CFDBF /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB20252D5BD676007CFDBF /* MarkdownUI */; };
-		C1AB20282D5BE001007CFDBF /* CoreAILM in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB20272D5BE001007CFDBF /* CoreAILM */; };
-		C1AB202A2D5BF001007CFDBF /* CoreAIShared in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB202B2D5BF001007CFDBF /* CoreAIShared */; };
 		C1AB202D2D5BF100007CFDBF /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = C1AB202E2D5BF100007CFDBF /* Tokenizers */; };
 /* End PBXBuildFile section */
 
@@ -75,8 +73,6 @@
 			files = (
 				C1AB20232D5BD662007CFDBF /* KeyboardShortcuts in Frameworks */,
 				C1AB20262D5BD676007CFDBF /* MarkdownUI in Frameworks */,
-				C1AB20282D5BE001007CFDBF /* CoreAILM in Frameworks */,
-				C1AB202A2D5BF001007CFDBF /* CoreAIShared in Frameworks */,
 				C1AB202D2D5BF100007CFDBF /* Tokenizers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -140,8 +136,6 @@
 			packageProductDependencies = (
 				C1AB20222D5BD662007CFDBF /* KeyboardShortcuts */,
 				C1AB20252D5BD676007CFDBF /* MarkdownUI */,
-				C1AB20272D5BE001007CFDBF /* CoreAILM */,
-				C1AB202B2D5BF001007CFDBF /* CoreAIShared */,
 				C1AB202E2D5BF100007CFDBF /* Tokenizers */,
 			);
 			productName = Aiassistant;
@@ -230,7 +224,6 @@
 			packageReferences = (
 				C1AB20212D5BD662007CFDBF /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				C1AB20242D5BD676007CFDBF /* XCRemoteSwiftPackageReference "MarkdownUI" */,
-				C1AB20292D5BE001007CFDBF /* XCRemoteSwiftPackageReference "coreai-models" */,
 				C1AB202C2D5BF100007CFDBF /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -621,10 +614,6 @@
 				minimumVersion = 2.4.1;
 			};
 		};
-		C1AB20292D5BE001007CFDBF /* XCLocalSwiftPackageReference "coreai-models" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "LocalPackages/coreai-models";
-		};
 		C1AB202C2D5BF100007CFDBF /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/huggingface/swift-transformers";
@@ -645,16 +634,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C1AB20242D5BD676007CFDBF /* XCRemoteSwiftPackageReference "MarkdownUI" */;
 			productName = MarkdownUI;
-		};
-		C1AB20272D5BE001007CFDBF /* CoreAILM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C1AB20292D5BE001007CFDBF /* XCLocalSwiftPackageReference "coreai-models" */;
-			productName = CoreAILM;
-		};
-		C1AB202B2D5BF001007CFDBF /* CoreAIShared */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C1AB20292D5BE001007CFDBF /* XCLocalSwiftPackageReference "coreai-models" */;
-			productName = CoreAIShared;
 		};
 		C1AB202E2D5BF100007CFDBF /* Tokenizers */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -231,7 +231,7 @@ struct SettingsView: View {
                                 .fontWeight(.medium)
                         }
 
-                        Text("Fallback command: mlx_lm.server --model \(settings.selectedCoreAIGemmaModel.mlxModelID) --port 8080")
+                        Text("Fallback command: \(settings.selectedCoreAIGemmaModel.fallbackServerCommand)")
                             .font(.caption)
                             .monospaced()
                             .foregroundColor(.white.opacity(0.65))

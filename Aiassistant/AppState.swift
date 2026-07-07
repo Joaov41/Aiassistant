@@ -170,7 +170,7 @@ class AppState: ObservableObject {
         let pccProvider = FMPCCProvider()
         self.pccProvider = pccProvider
         self.appleProvider = AppleIntelligenceProvider(pccFallbackProvider: pccProvider)
-        self.coreAIGemmaProvider = CoreAIGemmaProvider()
+        self.coreAIGemmaProvider = CoreAIGemmaProvider(pccFallbackProvider: pccProvider)
         
         if !appleProvider.isAvailable {
             print("Warning: Apple Intelligence on-device model unavailable — \(appleProvider.availabilityDescription)")
