@@ -38,6 +38,7 @@ struct PopupView: View {
     @State private var dropFeedback: String? = nil
     @State private var lastDropFeedbackID: UUID?
     @State private var attachmentMessageID: UUID?
+    @State private var showAttachmentPreview = false
     @State private var dragOffset: CGFloat = 0
     
     private var dropTypes: [UTType] {
@@ -324,19 +325,60 @@ struct PopupView: View {
 
     @ViewBuilder
     private var attachedContentView: some View {
-        if let attachmentName = appState.attachedContentName, !attachmentName.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "paperclip")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(attachmentName)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
+        let previewImageData = appState.capturedScreenshotData ?? appState.selectedImages.first
+        let attachmentName = appState.attachedContentName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = attachmentName?.isEmpty == false ? attachmentName ?? "Captured Window" : "Captured Window"
+
+        if previewImageData != nil || attachmentName?.isEmpty == false {
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    if let previewImageData, let nsImage = NSImage(data: previewImageData) {
+                        Button {
+                            showAttachmentPreview = true
+                        } label: {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 52, height: 36)
+                                .clipped()
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                )
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open attachment preview")
+                    } else {
+                        Image(systemName: "paperclip")
+                            .frame(width: 20)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(displayName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer(minLength: 0)
+
+                    if previewImageData != nil {
+                        Button {
+                            showAttachmentPreview = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 24, height: 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Open attachment preview")
+                    }
+                }
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, 8)
             .padding(.horizontal, 10)
             .background(Color.white.opacity(0.06))
             .overlay(
@@ -353,27 +395,7 @@ struct PopupView: View {
     @ViewBuilder
     private var chatAndInputView: some View {
         VStack(spacing: 0) {
-            // --- ADDED: Display Captured Image if present ---
-            if let previewImageData = appState.capturedScreenshotData ?? appState.selectedImages.first {
-                VStack {
-                    Text("Captured Window:")
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .padding(.top)
-                    // Display the first captured image (assuming window capture provides one)
-                    if let nsImage = NSImage(data: previewImageData) {
-                        Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxHeight: 200) // Limit height in the preview
-                            .padding()
-                            .background(Color.black.opacity(0.2))
-                            .cornerRadius(8)
-                    }
-                    Divider()
-                }
-                .padding(.horizontal)
-            } else if appState.isProcessing {
+            if appState.isProcessing && appState.capturedScreenshotData == nil && appState.selectedImages.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView()
                         .scaleEffect(0.7)
@@ -393,7 +415,6 @@ struct PopupView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
             }
-            // --- END ADDED ---
 
             attachedContentView
             
@@ -496,6 +517,16 @@ struct PopupView: View {
                     },
                     promptSelectionOnly: true
                 )
+            }
+            .sheet(isPresented: $showAttachmentPreview) {
+                if let previewImageData = appState.capturedScreenshotData ?? appState.selectedImages.first,
+                   let previewImage = NSImage(data: previewImageData) {
+                    AttachmentImagePreview(
+                        image: previewImage,
+                        title: attachmentPreviewTitle,
+                        onClose: { showAttachmentPreview = false }
+                    )
+                }
             }
         }
         .onDrop(of: dropTypes, isTargeted: $isDropTargeted, perform: handleDrop)
@@ -826,6 +857,7 @@ struct PopupView: View {
     
     /// Called when user presses Return or taps Send.
     private func onSend() {
+        showAttachmentPreview = false
         switch appState.selectedMode {
         case .chat:
             sendChatMessage()
@@ -1309,11 +1341,17 @@ struct PopupView: View {
     private func startNewChat() {
         chatMessages.removeAll()
         attachmentMessageID = nil
+        showAttachmentPreview = false
         userInput = ""
         pccChatTranscriptName = nil
         lastGeneratedImage = nil
         appState.clearConversationContext()
         appState.recheckClipboard()
+    }
+
+    private var attachmentPreviewTitle: String {
+        let name = appState.attachedContentName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name?.isEmpty == false ? name ?? "Attachment" : "Attachment"
     }
     
     /// The inline rewrite flow
@@ -1957,6 +1995,168 @@ private enum AssistantMarkdownParser {
             }
             return String(value[swiftRange])
         }
+    }
+}
+
+private struct AttachmentImagePreview: View {
+    let image: NSImage
+    let title: String
+    let onClose: () -> Void
+
+    @State private var zoom: CGFloat = 1
+    @State private var panOffset: CGSize = .zero
+    @State private var panStartOffset: CGSize?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 16)
+
+                Button {
+                    panOffset = .zero
+                    zoom = 1
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Reset zoom")
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Close preview")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            GeometryReader { proxy in
+                let fittedSize = fittedImageSize(in: proxy.size)
+                let scaledImageSize = CGSize(
+                    width: fittedSize.width * zoom,
+                    height: fittedSize.height * zoom
+                )
+
+                ZStack {
+                    Color.black.opacity(0.28)
+
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: scaledImageSize.width, height: scaledImageSize.height)
+                        .offset(panOffset)
+                }
+                .contentShape(Rectangle())
+                .clipped()
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            if panStartOffset == nil {
+                                panStartOffset = panOffset
+                            }
+                            let start = panStartOffset ?? .zero
+                            let proposedOffset = CGSize(
+                                width: start.width + value.translation.width,
+                                height: start.height + value.translation.height
+                            )
+                            panOffset = clampedPanOffset(
+                                proposedOffset,
+                                scaledImageSize: scaledImageSize,
+                                viewportSize: proxy.size
+                            )
+                        }
+                        .onEnded { _ in
+                            panStartOffset = nil
+                        }
+                )
+                .onChange(of: zoom) { oldZoom, newZoom in
+                    guard oldZoom > 0 else { return }
+                    let zoomRatio = newZoom / oldZoom
+                    let scaledOffset = CGSize(
+                        width: panOffset.width * zoomRatio,
+                        height: panOffset.height * zoomRatio
+                    )
+                    panOffset = clampedPanOffset(
+                        scaledOffset,
+                        scaledImageSize: scaledImageSize,
+                        viewportSize: proxy.size
+                    )
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Button {
+                    zoom = max(1, zoom - 0.25)
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(zoom <= 1)
+                .help("Zoom out")
+
+                Slider(value: $zoom, in: 1...5, step: 0.25)
+                    .frame(width: 220)
+
+                Button {
+                    zoom = min(5, zoom + 0.25)
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(zoom >= 5)
+                .help("Zoom in")
+
+                Text("\(Int(zoom * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 48, alignment: .trailing)
+            }
+            .padding(.vertical, 10)
+        }
+        .frame(minWidth: 640, idealWidth: 900, minHeight: 480, idealHeight: 700)
+        .background(.regularMaterial)
+        .preferredColorScheme(.dark)
+    }
+
+    private func fittedImageSize(in availableSize: CGSize) -> CGSize {
+        guard image.size.width > 0, image.size.height > 0 else {
+            return availableSize
+        }
+
+        let scale = min(
+            availableSize.width / image.size.width,
+            availableSize.height / image.size.height
+        )
+        return CGSize(
+            width: image.size.width * scale,
+            height: image.size.height * scale
+        )
+    }
+
+    private func clampedPanOffset(
+        _ offset: CGSize,
+        scaledImageSize: CGSize,
+        viewportSize: CGSize
+    ) -> CGSize {
+        let horizontalLimit = max(0, (scaledImageSize.width - viewportSize.width) / 2)
+        let verticalLimit = max(0, (scaledImageSize.height - viewportSize.height) / 2)
+
+        return CGSize(
+            width: min(max(offset.width, -horizontalLimit), horizontalLimit),
+            height: min(max(offset.height, -verticalLimit), verticalLimit)
+        )
     }
 }
 

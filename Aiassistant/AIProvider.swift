@@ -13,10 +13,21 @@ struct AIResponse {
         providerName: String = AIProviderKind.localAppleFoundation.fullDisplayName,
         pccTranscriptName: String? = nil
     ) {
-        self.text = text
+        self.text = Self.sanitizeDisplayText(text)
         self.images = images
         self.providerName = providerName
         self.pccTranscriptName = pccTranscriptName
+    }
+
+    static func sanitizeDisplayText(_ text: String) -> String {
+        text
+            .components(separatedBy: .newlines)
+            .filter { line in
+                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmedLine != "****" && trimmedLine != #""""#
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -41,7 +52,7 @@ enum FMPCCProviderError: LocalizedError {
         case .invalidImage(let index):
             return "Image \(index + 1) could not be prepared for Apple PCC."
         case .processFailed(_, let output):
-            if output.localizedCaseInsensitiveContains("PCC inference is not available") {
+            if FMPCCProvider.isPCCContextUnavailable(output) {
                 return "Apple PCC is unavailable: \(output)"
             }
             if output.localizedCaseInsensitiveContains("quota") || output.localizedCaseInsensitiveContains("rate limit") {
@@ -107,11 +118,19 @@ final class FMPCCProvider: ObservableObject, AIProvider {
         }
 
         let transcriptName = existingTranscriptName ?? "Aiassistant-\(UUID().uuidString)"
-        var arguments = ["respond", "--model", "pcc", "--no-stream"]
-        if existingTranscriptName != nil {
-            arguments += ["--load-transcript", Self.transcriptFilePath(for: transcriptName)]
+        let supportsResume = await Self.supportsResumeTranscriptOption()
+        if supportsResume {
+            try FileManager.default.createDirectory(
+                at: Self.transcriptDirectory,
+                withIntermediateDirectories: true
+            )
         }
-        arguments += ["--save-transcript", transcriptName]
+        var arguments = ["respond", "--model", "pcc", "--no-stream"]
+        arguments += Self.transcriptArguments(
+            existingTranscriptName: existingTranscriptName,
+            transcriptName: transcriptName,
+            supportsResume: supportsResume
+        )
         if let systemPrompt = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !systemPrompt.isEmpty {
             arguments += ["--instructions", systemPrompt]
         }
@@ -130,9 +149,13 @@ final class FMPCCProvider: ObservableObject, AIProvider {
 
         print("FMPCCProvider: running /usr/bin/fm \(arguments.map(Self.shellDisplayArgument).joined(separator: " "))")
         let result = try await withTaskCancellationHandler {
+            if supportsResume {
+                print("FMPCCProvider: current fm CLI requires the Terminal execution context; using persistent Terminal helper.")
+                return try await runFMViaTerminalHelper(arguments: arguments)
+            }
             let directResult = try await runFM(arguments: arguments)
-            if directResult.status != 0, Self.isPCCContextUnavailable(directResult.output) {
-                print("FMPCCProvider: direct fm is not PCC-capable in this context; retrying through persistent Terminal helper.")
+            if directResult.status != 0, Self.shouldRetryViaTerminal(directResult.output) {
+                print("FMPCCProvider: direct fm failed in the app context; retrying through persistent Terminal helper.")
                 return try await runFMViaTerminalHelper(arguments: arguments)
             }
             return directResult
@@ -480,19 +503,192 @@ final class FMPCCProvider: ObservableObject, AIProvider {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func isPCCContextUnavailable(_ output: String) -> Bool {
-        output.localizedCaseInsensitiveContains("PCC inference is not available in this context")
+    static func isPCCContextUnavailable(_ output: String) -> Bool {
+        let normalized = output.lowercased()
+        return normalized.contains("pcc inference is not available in this context")
+            || normalized.contains("private cloud compute is not available in this context")
+            || normalized.contains("please use the terminal app")
     }
 
-    private static func cleanFMResponse(_ output: String) -> String {
-        output
+    static func shouldRetryViaTerminal(_ output: String) -> Bool {
+        isPCCContextUnavailable(output)
+            || output.localizedCaseInsensitiveContains("failed to parse generated content")
+    }
+
+    static func cleanFMResponse(_ output: String) -> String {
+        let cleanedOutput = output
             .components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Session saved:") }
+            .filter { line in
+                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !trimmedLine.hasPrefix("Session saved:")
+                    && !trimmedLine.hasPrefix("Transcript saved:")
+                    && !trimmedLine.hasPrefix("Transcript saved to:")
+            }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return displayTextFromStructuredResponse(cleanedOutput)
+    }
+
+    static func displayTextFromStructuredResponse(_ text: String) -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let jsonText: String
+
+        if trimmedText.hasPrefix("```") && trimmedText.hasSuffix("```") {
+            var lines = trimmedText.components(separatedBy: .newlines)
+            guard
+                let openingFence = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                openingFence == "```json",
+                lines.last?.trimmingCharacters(in: .whitespacesAndNewlines) == "```"
+            else {
+                return text
+            }
+            lines.removeFirst()
+            lines.removeLast()
+            jsonText = lines.joined(separator: "\n")
+        } else if trimmedText.hasPrefix("{") && trimmedText.hasSuffix("}") {
+            jsonText = trimmedText
+        } else {
+            return text
+        }
+
+        guard
+            let data = jsonText.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dictionary = object as? [String: Any]
+        else {
+            return text
+        }
+
+        for key in ["summary", "answer", "response", "description", "text", "content", "result"] {
+            if let value = dictionary[key] as? String {
+                let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedValue.isEmpty {
+                    return trimmedValue
+                }
+            }
+        }
+        return markdownFromJSONDictionary(dictionary) ?? text
+    }
+
+    private static func markdownFromJSONDictionary(_ dictionary: [String: Any]) -> String? {
+        let sections = dictionary.keys.sorted().compactMap { key -> String? in
+            let title = humanReadableJSONKey(key)
+            guard let value = dictionary[key] else { return nil }
+
+            if let items = value as? [Any] {
+                let renderedItems = items.compactMap(jsonListItem)
+                guard !renderedItems.isEmpty else { return nil }
+                return "**\(title)**\n\n" + renderedItems.map { "- \($0)" }.joined(separator: "\n")
+            }
+
+            if let nestedDictionary = value as? [String: Any],
+               let nestedText = markdownFromJSONDictionary(nestedDictionary) {
+                return "**\(title)**\n\n\(nestedText)"
+            }
+
+            guard let scalar = jsonScalarText(value) else { return nil }
+            return "**\(title):** \(scalar)"
+        }
+
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
+    }
+
+    private static func jsonListItem(_ value: Any) -> String? {
+        if let dictionary = value as? [String: Any] {
+            let name = ["name", "title", "label"]
+                .compactMap { dictionary[$0] as? String }
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let identifier = ["handle", "username", "email", "url", "id"]
+                .compactMap { dictionary[$0] as? String }
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+            if let name, let identifier {
+                return "**\(name)** (\(identifier))"
+            }
+            if let name {
+                return "**\(name)**"
+            }
+
+            let fields = dictionary.keys.sorted().compactMap { key -> String? in
+                guard let fieldValue = dictionary[key], let scalar = jsonScalarText(fieldValue) else {
+                    return nil
+                }
+                return "**\(humanReadableJSONKey(key)):** \(scalar)"
+            }
+            return fields.isEmpty ? nil : fields.joined(separator: "; ")
+        }
+
+        return jsonScalarText(value)
+    }
+
+    private static func jsonScalarText(_ value: Any) -> String? {
+        if let string = value as? String {
+            let trimmedString = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedString.isEmpty ? nil : trimmedString
+        }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return number.boolValue ? "Yes" : "No"
+            }
+            return number.stringValue
+        }
+        if value is NSNull {
+            return nil
+        }
+        return nil
+    }
+
+    private static func humanReadableJSONKey(_ key: String) -> String {
+        key
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.lowercased() }
+            .joined(separator: " ")
+            .capitalized
+    }
+
+    private static var transcriptDirectory: URL {
+        helperDirectory.appendingPathComponent("transcripts", isDirectory: true)
+    }
+
+    private static func supportsResumeTranscriptOption() async -> Bool {
+        guard let result = try? await runOneShot(arguments: ["respond", "--help"]) else {
+            return false
+        }
+        return result.output.contains("--resume")
+    }
+
+    static func transcriptArguments(
+        existingTranscriptName: String?,
+        transcriptName: String,
+        supportsResume: Bool
+    ) -> [String] {
+        if supportsResume {
+            let transcriptPath = transcriptFilePath(for: transcriptName)
+            var arguments: [String] = []
+            if existingTranscriptName != nil {
+                arguments += ["--resume", transcriptPath]
+            }
+            arguments += ["--save-transcript", transcriptPath]
+            return arguments
+        }
+
+        var arguments: [String] = []
+        if existingTranscriptName != nil {
+            arguments += ["--load-transcript", legacyTranscriptFilePath(for: transcriptName)]
+        }
+        arguments += ["--save-transcript", transcriptName]
+        return arguments
     }
 
     private static func transcriptFilePath(for transcriptName: String) -> String {
+        transcriptDirectory
+            .appendingPathComponent(transcriptName)
+            .path
+    }
+
+    private static func legacyTranscriptFilePath(for transcriptName: String) -> String {
         FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".fm/sessions/\(transcriptName).json")

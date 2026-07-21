@@ -52,6 +52,111 @@ struct AiassistantTests {
         #expect(AppleIntelligenceProvider.shouldRouteToPCCGateway(for: error))
     }
 
+    @Test func pccTerminalContextMessageRoutesThroughTerminalHelper() async throws {
+        #expect(FMPCCProvider.isPCCContextUnavailable("Private Cloud Compute is not available in this context. Please use the Terminal app."))
+    }
+
+    @Test func pccGeneratedContentParseFailureRoutesThroughTerminalHelper() async throws {
+        #expect(FMPCCProvider.shouldRetryViaTerminal("Error: Failed to parse generated content."))
+    }
+
+    @Test func pccTranscriptSaveLineIsRemovedFromResponse() async throws {
+        let output = """
+        Here is the inline replacement.
+        Transcript saved to: /Users/johnval/Aiassistant-CD908000-E7C3-4A70-BEE6-BBB17D2E0196
+        """
+
+        #expect(FMPCCProvider.cleanFMResponse(output) == "Here is the inline replacement.")
+    }
+
+    @Test func pccFencedJSONSummaryIsDisplayedAsPlainText() async throws {
+        let output = """
+        ```json
+        {
+          "summary": "The image shows a freight tracker.",
+          "shipment_count": 11
+        }
+        ```
+        Transcript saved to: /tmp/Aiassistant-test
+        """
+
+        #expect(FMPCCProvider.cleanFMResponse(output) == "The image shows a freight tracker.")
+    }
+
+    @Test func pccJSONWithoutSummaryIsDisplayedAsMarkdown() async throws {
+        let output = """
+        ```json
+        {"shipment_count": 11}
+        ```
+        """
+
+        #expect(FMPCCProvider.cleanFMResponse(output) == "**Shipment Count:** 11")
+    }
+
+    @Test func pccFollowUpJSONArrayIsDisplayedAsMarkdownList() async throws {
+        let output = """
+        ```json
+        {
+          "accounts": [
+            {"name": "acid", "handle": "@0393_tim"},
+            {"name": "JV", "handle": "@johnny_xx"}
+          ]
+        }
+        ```
+        """
+
+        let cleaned = FMPCCProvider.cleanFMResponse(output)
+        #expect(cleaned == """
+        **Accounts**
+
+        - **acid** (@0393_tim)
+        - **JV** (@johnny_xx)
+        """)
+        #expect(!cleaned.contains("```json"))
+    }
+
+    @Test func pccNormalMarkdownResponseIsPreserved() async throws {
+        let output = "The image shows **eleven shipments**."
+
+        #expect(FMPCCProvider.cleanFMResponse(output) == output)
+    }
+
+    @Test func currentPCCCLIResumesFromTheExplicitlySavedTranscript() async throws {
+        let arguments = FMPCCProvider.transcriptArguments(
+            existingTranscriptName: "Aiassistant-test",
+            transcriptName: "Aiassistant-test",
+            supportsResume: true
+        )
+
+        #expect(arguments.count == 4)
+        #expect(arguments[0] == "--resume")
+        #expect(arguments[1] == arguments[3])
+        #expect(arguments[2] == "--save-transcript")
+        #expect(!arguments.contains("--load-transcript"))
+    }
+
+    @Test func legacyPCCCLIStillUsesLoadTranscript() async throws {
+        let arguments = FMPCCProvider.transcriptArguments(
+            existingTranscriptName: "Aiassistant-test",
+            transcriptName: "Aiassistant-test",
+            supportsResume: false
+        )
+
+        #expect(arguments[0] == "--load-transcript")
+        #expect(arguments[1].hasSuffix("/.fm/sessions/Aiassistant-test.json"))
+        #expect(Array(arguments[2...]) == ["--save-transcript", "Aiassistant-test"])
+    }
+
+    @Test func emptyMarkdownArtifactsAreRemovedFromAIResponseText() async throws {
+        let response = AIResponse(text: """
+        ****
+        The actual answer.
+        ""
+        """)
+
+        #expect(response.text == "The actual answer.")
+    }
+
     @Test func coreAIGemmaProviderKindPersists() async throws {
         let settings = AppSettings.shared
         let oldProvider = settings.selectedAIProvider
