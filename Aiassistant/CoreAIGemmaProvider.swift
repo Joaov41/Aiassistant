@@ -33,7 +33,7 @@ enum CoreAIGemmaProviderError: LocalizedError {
         case .staticBufferAllocationFailed(let file):
             return "Could not load the required support table: \(file)."
         case .mlxServerUnavailable(let url):
-            return "Local MLX server is not reachable at \(url.absoluteString). The app tried to start it automatically."
+            return "Local MLX server is not running at \(url.absoluteString). Choose Start MLX Servers from the menu bar first."
         case .mlxServerCommandMissing:
             return "mlx_lm.server was not found. Install MLX-LM with pip install mlx-lm, or add mlx_lm.server to PATH."
         case .mlxServerStartTimedOut(let modelID):
@@ -150,10 +150,10 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         let model = selectedModel
         let generationTask = Task {
             if images.isEmpty && !model.usesVLMForText {
-                try await LocalMLXServerLauncher.shared.ensureRunning(model: model, baseURL: self.baseURL)
+                try await LocalMLXServerLauncher.shared.requireRunning(baseURL: self.baseURL)
                 return try await self.generate(prompt: prompt, model: model, streamingUpdate: streamingUpdate)
             } else {
-                try await LocalMLXVLMServerLauncher.shared.ensureRunning(model: model, baseURL: self.visionBaseURL)
+                try await LocalMLXVLMServerLauncher.shared.requireRunning(baseURL: self.visionBaseURL)
                 return try await self.generateVision(prompt: prompt, model: model, images: images, streamingUpdate: streamingUpdate)
             }
         }
@@ -569,6 +569,12 @@ private actor LocalMLXServerLauncher {
     private let port = 8080
     private let logURL = URL(fileURLWithPath: "/tmp/aiassistant-mlx-server.log")
 
+    func requireRunning(baseURL: URL) async throws {
+        guard await isServerReachable(baseURL: baseURL) else {
+            throw CoreAIGemmaProviderError.mlxServerUnavailable(baseURL)
+        }
+    }
+
     func ensureRunning(model: CoreAIGemmaModel, baseURL: URL) async throws {
         if await isServerReachable(baseURL: baseURL) {
             if process?.isRunning == true,
@@ -716,6 +722,12 @@ private actor LocalMLXVLMServerLauncher {
     private var runningModelID: String?
     private let port = 8081
     private let logURL = URL(fileURLWithPath: "/tmp/aiassistant-mlx-vlm-server.log")
+
+    func requireRunning(baseURL: URL) async throws {
+        guard await isServerReachable(baseURL: baseURL) else {
+            throw CoreAIGemmaProviderError.mlxServerUnavailable(baseURL)
+        }
+    }
 
     func ensureRunning(model: CoreAIGemmaModel, baseURL: URL) async throws {
         if await isServerReachable(baseURL: baseURL) {

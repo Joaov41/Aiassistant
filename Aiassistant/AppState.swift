@@ -30,6 +30,7 @@ class AppState: ObservableObject {
     static let shared = AppState()
     
     @Published var appleProvider: AppleIntelligenceProvider
+    @Published var cloudProvider: PrivateCloudComputeProvider
     @Published var pccProvider: FMPCCProvider
     @Published var coreAIGemmaProvider: CoreAIGemmaProvider
     @Published var selectedMode: InteractionMode = .chat
@@ -116,6 +117,8 @@ class AppState: ObservableObject {
         switch AppSettings.shared.selectedAIProvider {
         case .localAppleFoundation:
             return appleProvider
+        case .appleCloud:
+            return cloudProvider
         case .applePCC:
             return pccProvider
         case .coreAIGemma:
@@ -132,6 +135,13 @@ class AppState: ObservableObject {
         switch AppSettings.shared.selectedAIProvider {
         case .localAppleFoundation:
             return try await appleProvider.processText(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                images: images,
+                videos: videos
+            )
+        case .appleCloud:
+            return try await cloudProvider.processText(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: images,
@@ -158,6 +168,8 @@ class AppState: ObservableObject {
         switch AppSettings.shared.selectedAIProvider {
         case .localAppleFoundation:
             appleProvider.cancel()
+        case .appleCloud:
+            cloudProvider.cancel()
         case .applePCC:
             pccProvider.cancel()
         case .coreAIGemma:
@@ -168,6 +180,7 @@ class AppState: ObservableObject {
     // MARK: - Initialization
     private init() {
         let pccProvider = FMPCCProvider()
+        self.cloudProvider = PrivateCloudComputeProvider()
         self.pccProvider = pccProvider
         self.appleProvider = AppleIntelligenceProvider(pccFallbackProvider: pccProvider)
         self.coreAIGemmaProvider = CoreAIGemmaProvider(pccFallbackProvider: pccProvider)
@@ -176,15 +189,6 @@ class AppState: ObservableObject {
             print("Warning: Apple Intelligence on-device model unavailable — \(appleProvider.availabilityDescription)")
         }
 
-        if AppSettings.shared.selectedAIProvider == .coreAIGemma {
-            Task {
-                do {
-                    try await self.coreAIGemmaProvider.startServerIfNeeded()
-                } catch {
-                    print("Warning: Local MLX server did not start automatically — \(error.localizedDescription)")
-                }
-            }
-        }
     }
     
     // MARK: - Clipboard Checking

@@ -223,7 +223,7 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(Color.green)
+                                .fill(Color.orange)
                                 .frame(width: 8, height: 8)
                             Text(gemmaStatusDescription)
                                 .font(.caption)
@@ -313,18 +313,15 @@ struct SettingsView: View {
         .onAppear {
             checkPCCAvailability()
             refreshGemmaStatus()
-            startGemmaServerIfNeeded()
         }
         .onChange(of: settings.selectedAIProvider) { _, _ in
             if settings.selectedAIProvider == .applePCC {
                 checkPCCAvailability()
             }
             refreshGemmaStatus()
-            startGemmaServerIfNeeded()
         }
         .onChange(of: settings.selectedCoreAIGemmaModel) { _, _ in
             refreshGemmaStatus()
-            startGemmaServerIfNeeded()
         }
         .onDisappear {
             cancelPCCAvailabilityCheck()
@@ -334,6 +331,8 @@ struct SettingsView: View {
     private var selectedProviderIcon: String {
         switch settings.selectedAIProvider {
         case .localAppleFoundation:
+            return "apple.intelligence"
+        case .appleCloud:
             return "apple.intelligence"
         case .applePCC:
             return "cloud"
@@ -376,25 +375,7 @@ struct SettingsView: View {
 
     private func refreshGemmaStatus() {
         let model = settings.selectedCoreAIGemmaModel
-        gemmaStatusDescription = "App starts local MLX text and image servers automatically for \(model.displayName)."
-    }
-
-    private func startGemmaServerIfNeeded() {
-        guard settings.selectedAIProvider == .coreAIGemma else {
-            return
-        }
-        Task {
-            do {
-                try await appState.coreAIGemmaProvider.startServerIfNeeded()
-                await MainActor.run {
-                    refreshGemmaStatus()
-                }
-            } catch {
-                await MainActor.run {
-                    gemmaStatusDescription = error.localizedDescription
-                }
-            }
-        }
+        gemmaStatusDescription = "MLX servers do not start automatically. Choose Start MLX Servers from the menu bar when you want to use \(model.displayName)."
     }
 
     private func saveSettings() {

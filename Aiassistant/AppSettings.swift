@@ -2,6 +2,7 @@ import Foundation
 
 enum AIProviderKind: String, CaseIterable, Identifiable {
     case localAppleFoundation = "local_apple_foundation"
+    case appleCloud = "apple_cloud"
     case applePCC = "apple_pcc"
     case coreAIGemma = "core_ai_gemma"
 
@@ -11,6 +12,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         switch self {
         case .localAppleFoundation:
             return "Local"
+        case .appleCloud:
+            return "Apple Cloud"
         case .applePCC:
             return "Apple PCC"
         case .coreAIGemma:
@@ -22,6 +25,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         switch self {
         case .localAppleFoundation:
             return "Apple Foundation Model (On-Device)"
+        case .appleCloud:
+            return "Apple Private Cloud Compute"
         case .applePCC:
             return "Apple PCC"
         case .coreAIGemma:
@@ -33,6 +38,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
         switch self {
         case .localAppleFoundation:
             return "Runs locally via Apple Intelligence. No API key needed, and your data stays on this Mac."
+        case .appleCloud:
+            return "Uses Apple's direct Private Cloud Compute model through FoundationModels. No gateway is needed."
         case .applePCC:
             return "Uses Apple PCC. No gateway is needed for this Mac app."
         case .coreAIGemma:
