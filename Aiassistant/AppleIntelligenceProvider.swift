@@ -7,11 +7,11 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
     private let model = SystemLanguageModel.default
-    private let pccFallbackProvider: FMPCCProvider?
+    private let cloudFallbackProvider: PrivateCloudComputeProvider?
     private var currentTask: Task<Void, Never>?
 
-    init(pccFallbackProvider: FMPCCProvider? = nil) {
-        self.pccFallbackProvider = pccFallbackProvider
+    init(cloudFallbackProvider: PrivateCloudComputeProvider? = nil) {
+        self.cloudFallbackProvider = cloudFallbackProvider
     }
 
     // MARK: - Availability
@@ -77,18 +77,17 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
             // The local foundation model is text-only on output; it never returns generated images.
             return AIResponse(text: response.content, providerName: AIProviderKind.localAppleFoundation.fullDisplayName)
         } catch {
-            if Self.shouldRouteToPCCGateway(for: error), let pccFallbackProvider {
-                let fallbackResponse = try await pccFallbackProvider.processText(
+            if Self.shouldRouteToPrivateCloud(for: error), let cloudFallbackProvider {
+                let fallbackResponse = try await cloudFallbackProvider.processText(
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     images: images,
                     videos: videos
                 )
                 return AIResponse(
-                    text: "\(Self.pccFallbackNotice)\n\n\(fallbackResponse.text)",
+                    text: "\(Self.cloudFallbackNotice)\n\n\(fallbackResponse.text)",
                     images: fallbackResponse.images,
-                    providerName: fallbackResponse.providerName,
-                    pccTranscriptName: fallbackResponse.pccTranscriptName
+                    providerName: fallbackResponse.providerName
                 )
             }
 
@@ -108,7 +107,7 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
 
     // MARK: - Helpers
 
-    static let pccFallbackNotice = "Local model context limit reached. Switched to Apple PCC."
+    static let cloudFallbackNotice = "Local model context limit reached. Switched to Apple Cloud."
 
     private static func localPromptText(from userPrompt: String, images: [Data], videos: [Data]?) -> String {
         var notes: [String] = []
@@ -122,7 +121,7 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
         return "\(userPrompt)\n\n(Note: \(notes.joined(separator: "; ")). Answer based on the text, and mention this limitation if relevant.)"
     }
 
-    static func shouldRouteToPCCGateway(for error: Error) -> Bool {
+    static func shouldRouteToPrivateCloud(for error: Error) -> Bool {
         if let languageModelError = error as? LanguageModelError {
             if case .contextSizeExceeded = languageModelError {
                 return true

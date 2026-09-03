@@ -11,7 +11,6 @@ struct PopupView: View {
     // Local chat state for the conversation with unique IDs and image support
     @State private var chatMessages: [(id: UUID, message: String, images: [Data])] = []
     @State private var userInput: String = ""
-    @State private var pccChatTranscriptName: String? = nil
     @State private var selectedReplyMessageID: UUID?
     @State private var selectedReplyText: String = ""
     @State private var replyTextHeights: [UUID: CGFloat] = [:]
@@ -557,9 +556,6 @@ struct PopupView: View {
         .onChange(of: appState.selectedText) { _ in
             setAttachmentMessage(for: appState.lastClipboardType)
         }
-        .onChange(of: appState.retainedTextContext) { _ in
-            pccChatTranscriptName = nil
-        }
         .offset(y: dragOffset)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: dragOffset)
         .highPriorityGesture(
@@ -1023,19 +1019,8 @@ struct PopupView: View {
                 do {
                     let aiResponse: AIResponse
                     var gemmaStreamingMessageID: UUID?
-                    if AppSettings.shared.selectedAIProvider == .applePCC {
-                        aiResponse = try await appState.pccProvider.processText(
-                            systemPrompt: systemPrompt,
-                            userPrompt: finalPrompt,
-                            images: imagesToIncludeForProcessing,
-                            videos: appState.selectedVideos,
-                            transcriptName: hasRetainedDocumentContext ? nil : pccChatTranscriptName
-                        )
-                        if !hasRetainedDocumentContext, let transcriptName = aiResponse.pccTranscriptName {
-                            pccChatTranscriptName = transcriptName
-                        }
-                    } else if AppSettings.shared.selectedAIProvider == .coreAIGemma {
-                        let gemmaPrompt = localMLXChatPrompt(
+                    if AppSettings.shared.selectedAIProvider == .coreAIGemma {
+                        let gemmaPrompt = localServerChatPrompt(
                             currentPrompt: finalPrompt,
                             latestUserMessage: typedPrompt,
                             includePriorTranscript: !hasRetainedDocumentContext
@@ -1058,6 +1043,18 @@ struct PopupView: View {
                                 let visibleText = partialText.isEmpty ? "MLX thinking..." : partialText
                                 chatMessages[index].message = "Assistant: \(visibleText)"
                             }
+                        )
+                    } else if AppSettings.shared.selectedAIProvider == .localOpenAI {
+                        let localOpenAIPrompt = localServerChatPrompt(
+                            currentPrompt: finalPrompt,
+                            latestUserMessage: typedPrompt,
+                            includePriorTranscript: !hasRetainedDocumentContext
+                        )
+                        aiResponse = try await appState.localOpenAIProvider.processText(
+                            systemPrompt: systemPrompt,
+                            userPrompt: localOpenAIPrompt,
+                            images: imagesToIncludeForProcessing,
+                            videos: appState.selectedVideos
                         )
                     } else {
                         aiResponse = try await appState.processWithActiveProvider(
@@ -1085,8 +1082,7 @@ struct PopupView: View {
                                 selectedText: appState.selectedText,
                                 option: WritingOption.general,
                                 images: aiResponse.images,
-                                providerName: aiResponse.providerName,
-                                pccTranscriptName: aiResponse.pccTranscriptName
+                                providerName: aiResponse.providerName
                             )
                             
                             // Create the window using the view
@@ -1151,7 +1147,7 @@ struct PopupView: View {
         } // End of Task wrapper
     }
 
-    private func localMLXChatPrompt(
+    private func localServerChatPrompt(
         currentPrompt: String,
         latestUserMessage: String,
         includePriorTranscript: Bool
@@ -1343,7 +1339,6 @@ struct PopupView: View {
         attachmentMessageID = nil
         showAttachmentPreview = false
         userInput = ""
-        pccChatTranscriptName = nil
         lastGeneratedImage = nil
         appState.clearConversationContext()
         appState.recheckClipboard()
@@ -1513,8 +1508,7 @@ struct PopupView: View {
                             selectedText: externalText,
                             option: WritingOption.general,
                             images: aiResponse.images,
-                            providerName: aiResponse.providerName,
-                            pccTranscriptName: aiResponse.pccTranscriptName
+                            providerName: aiResponse.providerName
                         )
                         
                         let window = ResponseWindow(

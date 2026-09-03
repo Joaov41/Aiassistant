@@ -36,7 +36,6 @@ final class ResponseViewModel: ObservableObject {
 
     let initialSelectedText: String
     let initialOption: WritingOption // Ensure WritingOption enum is defined and accessible
-    private var pccTranscriptName: String?
 
     // Keep a weak reference to the AppState singleton
     private weak var appStateRef: AppState?
@@ -55,12 +54,10 @@ final class ResponseViewModel: ObservableObject {
         selectedText: String,
         option: WritingOption,
         images: [Data] = [],
-        providerName: String,
-        pccTranscriptName: String?
+        providerName: String
     ) {
         self.initialSelectedText = selectedText
         self.initialOption = option
-        self.pccTranscriptName = pccTranscriptName
         self.appStateRef = AppState.shared
 
         // Debug log to check initialSelectedText content
@@ -142,33 +139,17 @@ final class ResponseViewModel: ObservableObject {
                 // Debug log full conversation history length
                 print("DEBUG: Full conversationHistory length: \(conversationHistory.count)")
 
-                let response: AIResponse
-                if AppSettings.shared.selectedAIProvider == .applePCC,
-                   let transcriptName = self.pccTranscriptName,
-                   originalContext.isEmpty {
-                    response = try await appState.pccProvider.processText(
-                        systemPrompt: nil,
-                        userPrompt: trimmedQuestion,
-                        images: [],
-                        videos: [],
-                        transcriptName: transcriptName
-                    )
-                } else {
-                    let strictSystemPrompt = originalContext.isEmpty ? self.initialOption.systemPrompt : """
-                    You are a precise document extraction assistant. Use only the provided document/background context and chat transcript.
-                    If an amount, currency, date, or field is not explicitly present, say it is not found.
-                    Do not infer subtotals, taxes, totals, conversions, or missing values unless the user explicitly asks you to calculate from listed amounts.
-                    """
-                    response = try await appState.processWithActiveProvider(
-                        systemPrompt: strictSystemPrompt,
-                        userPrompt: combinedPrompt,
-                        images: [],
-                        videos: []
-                    )
-                }
-                if let updatedTranscriptName = response.pccTranscriptName {
-                    self.pccTranscriptName = updatedTranscriptName
-                }
+                let strictSystemPrompt = originalContext.isEmpty ? self.initialOption.systemPrompt : """
+                You are a precise document extraction assistant. Use only the provided document/background context and chat transcript.
+                If an amount, currency, date, or field is not explicitly present, say it is not found.
+                Do not infer subtotals, taxes, totals, conversions, or missing values unless the user explicitly asks you to calculate from listed amounts.
+                """
+                let response = try await appState.processWithActiveProvider(
+                    systemPrompt: strictSystemPrompt,
+                    userPrompt: combinedPrompt,
+                    images: [],
+                    videos: []
+                )
 
                 let assistantMessage = ChatMessage(
                     role: "assistant",
@@ -286,7 +267,6 @@ struct ResponseView: View {
         option: WritingOption,
         images: [Data] = [],
         providerName: String,
-        pccTranscriptName: String? = nil,
         contentTopInset: CGFloat = 0
     ) {
         // Create the ViewModel instance here and assign it to the @StateObject wrapper
@@ -295,8 +275,7 @@ struct ResponseView: View {
             selectedText: selectedText,
             option: option,
             images: images,
-            providerName: providerName,
-            pccTranscriptName: pccTranscriptName
+            providerName: providerName
         ))
         self.contentTopInset = contentTopInset
     }
@@ -506,10 +485,10 @@ struct ChatMessageView: View {
                 // Content (Text and Images)
                 VStack(alignment: .leading, spacing: 8) {
                     if message.role == "assistant", let providerName = message.providerName {
-                        Label(providerName, systemImage: providerName.contains("PCC") ? "cloud" : "apple.intelligence")
+                        Label(providerName, systemImage: providerName.contains("Cloud") ? "cloud" : "apple.intelligence")
                             .font(.caption2)
                             .fontWeight(.semibold)
-                            .foregroundColor(providerName.contains("PCC") ? .cyan.opacity(0.9) : .green.opacity(0.9))
+                            .foregroundColor(providerName.contains("Cloud") ? .cyan.opacity(0.9) : .green.opacity(0.9))
                             .padding(.bottom, 2)
                             .help("This response was generated with \(providerName)")
                     }

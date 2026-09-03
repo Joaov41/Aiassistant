@@ -707,7 +707,6 @@ struct QuickActionsView: View {
                         option: writingOption,
                         images: response.images,
                         providerName: response.providerName,
-                        pccTranscriptName: response.pccTranscriptName,
                         contentTopInset: 0
                     )
 

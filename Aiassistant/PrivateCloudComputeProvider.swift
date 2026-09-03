@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import Security
 
 #if canImport(FoundationModels)
 import FoundationModels
@@ -8,6 +9,7 @@ import FoundationModels
 enum PrivateCloudComputeProviderError: LocalizedError {
     case unsupportedOS
     case frameworkUnavailable
+    case missingEntitlement
     case modelUnavailable(String)
     case emptyResponse
     case cancelled
@@ -20,6 +22,8 @@ enum PrivateCloudComputeProviderError: LocalizedError {
             return "Apple Cloud requires macOS 27 or later."
         case .frameworkUnavailable:
             return "Apple Cloud is unavailable because FoundationModels is not present in this build."
+        case .missingEntitlement:
+            return "Apple Cloud requires Apple's managed Private Cloud Compute entitlement in this app's signing profile."
         case .modelUnavailable(let reason):
             return "Apple Private Cloud Compute is unavailable: \(reason)"
         case .emptyResponse:
@@ -36,6 +40,33 @@ enum PrivateCloudComputeProviderError: LocalizedError {
 
 final class PrivateCloudComputeProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
+
+    static var hasRequiredEntitlement: Bool {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(
+                task,
+                "com.apple.developer.private-cloud-compute" as CFString,
+                nil
+              ) else {
+            return false
+        }
+        return (value as? Bool) == true
+    }
+
+    var availabilityDescription: String {
+        guard #available(macOS 27.0, *) else {
+            return "Requires macOS 27 or later."
+        }
+        guard Self.hasRequiredEntitlement else {
+            return "Managed Private Cloud Compute entitlement is missing from this app's signature."
+        }
+
+        let model = PrivateCloudComputeLanguageModel()
+        if model.isAvailable {
+            return "Available. The direct Private Cloud Compute model is ready."
+        }
+        return "Unavailable: \(model.availability)"
+    }
 
     private var currentTask: Task<AIResponse, Error>?
 
@@ -100,6 +131,9 @@ final class PrivateCloudComputeProvider: ObservableObject, AIProvider {
         #if canImport(FoundationModels)
         guard #available(macOS 27.0, *) else {
             throw PrivateCloudComputeProviderError.unsupportedOS
+        }
+        guard hasRequiredEntitlement else {
+            throw PrivateCloudComputeProviderError.missingEntitlement
         }
 
         let model = PrivateCloudComputeLanguageModel()

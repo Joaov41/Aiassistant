@@ -3,8 +3,8 @@ import Foundation
 enum AIProviderKind: String, CaseIterable, Identifiable {
     case localAppleFoundation = "local_apple_foundation"
     case appleCloud = "apple_cloud"
-    case applePCC = "apple_pcc"
     case coreAIGemma = "core_ai_gemma"
+    case localOpenAI = "local_openai"
 
     var id: String { rawValue }
 
@@ -14,10 +14,10 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Local"
         case .appleCloud:
             return "Apple Cloud"
-        case .applePCC:
-            return "Apple PCC"
         case .coreAIGemma:
             return "Local MLX"
+        case .localOpenAI:
+            return "Local OpenAI"
         }
     }
 
@@ -27,10 +27,10 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Apple Foundation Model (On-Device)"
         case .appleCloud:
             return "Apple Private Cloud Compute"
-        case .applePCC:
-            return "Apple PCC"
         case .coreAIGemma:
             return "Local MLX Gemma"
+        case .localOpenAI:
+            return "Local OpenAI-Compatible Server"
         }
     }
 
@@ -40,10 +40,10 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
             return "Runs locally via Apple Intelligence. No API key needed, and your data stays on this Mac."
         case .appleCloud:
             return "Uses Apple's direct Private Cloud Compute model through FoundationModels. No gateway is needed."
-        case .applePCC:
-            return "Uses Apple PCC. No gateway is needed for this Mac app."
         case .coreAIGemma:
             return "Uses a local MLX server on this Mac. Full document context is sent to the local endpoint."
+        case .localOpenAI:
+            return "Connects to any OpenAI-compatible local server you run yourself. The app never starts this server."
         }
     }
 }
@@ -75,6 +75,22 @@ class AppSettings: ObservableObject {
         didSet { defaults.set(selectedCoreAIGemmaModel.rawValue, forKey: "selected_core_ai_gemma_model") }
     }
 
+    @Published var localOpenAIBaseURL: String {
+        didSet { defaults.set(localOpenAIBaseURL, forKey: "local_openai_base_url") }
+    }
+
+    @Published var localOpenAIModelID: String {
+        didSet { defaults.set(localOpenAIModelID, forKey: "local_openai_model_id") }
+    }
+
+    @Published var localOpenAIAPIKey: String {
+        didSet { defaults.set(localOpenAIAPIKey, forKey: "local_openai_api_key") }
+    }
+
+    @Published var localOpenAIDisableThinking: Bool {
+        didSet { defaults.set(localOpenAIDisableThinking, forKey: "local_openai_disable_thinking") }
+    }
+
     // Custom Quick Actions
     @Published var customQuickActions: [String] {
         didSet { defaults.set(customQuickActions, forKey: "custom_quick_actions") }
@@ -91,22 +107,32 @@ class AppSettings: ObservableObject {
     // MARK: - Init
     private init() {
         let defaults = UserDefaults.standard
+        let storedProvider = defaults.string(forKey: "selected_ai_provider") ?? ""
+        let selectedProvider = storedProvider == "apple_pcc"
+            ? AIProviderKind.appleCloud
+            : AIProviderKind(rawValue: storedProvider) ?? .localAppleFoundation
         
         // Load or set defaults
         self.shortcutText = defaults.string(forKey: "shortcut") ?? "⌥ Space"
         self.hasCompletedOnboarding = defaults.bool(forKey: "has_completed_onboarding")
         self.useGradientTheme = defaults.bool(forKey: "use_gradient_theme")
-        self.selectedAIProvider = AIProviderKind(
-            rawValue: defaults.string(forKey: "selected_ai_provider") ?? ""
-        ) ?? .localAppleFoundation
+        self.selectedAIProvider = selectedProvider
         self.selectedCoreAIGemmaModel = CoreAIGemmaModel(
             rawValue: defaults.string(forKey: "selected_core_ai_gemma_model") ?? ""
         ) ?? .gemma4_12B
+        self.localOpenAIBaseURL = defaults.string(forKey: "local_openai_base_url") ?? LocalOpenAIEndpoint.defaultBaseURL
+        self.localOpenAIModelID = defaults.string(forKey: "local_openai_model_id") ?? "local-model"
+        self.localOpenAIAPIKey = defaults.string(forKey: "local_openai_api_key") ?? ""
+        self.localOpenAIDisableThinking = defaults.bool(forKey: "local_openai_disable_thinking")
         self.customQuickActions = defaults.stringArray(forKey: "custom_quick_actions") ?? []
 
         // HotKey
         self.hotKeyCode = defaults.integer(forKey: "hotKey_keyCode")
         self.hotKeyModifiers = defaults.integer(forKey: "hotKey_modifiers")
+
+        if storedProvider == "apple_pcc" {
+            defaults.set(selectedProvider.rawValue, forKey: "selected_ai_provider")
+        }
     }
     
     // MARK: - Convenience

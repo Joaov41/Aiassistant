@@ -12,7 +12,7 @@ import FoundationModels
 
 struct AiassistantTests {
 
-    @Test func localContextWindowErrorRoutesToPCC() async throws {
+    @Test func localContextWindowErrorRoutesToPrivateCloud() async throws {
         let error = LanguageModelError.contextSizeExceeded(
             LanguageModelError.ContextSizeExceeded(
                 contextSize: 10,
@@ -21,130 +21,39 @@ struct AiassistantTests {
             )
         )
 
-        #expect(AppleIntelligenceProvider.shouldRouteToPCCGateway(for: error))
+        #expect(AppleIntelligenceProvider.shouldRouteToPrivateCloud(for: error))
     }
 
-    @Test func legacyLocalContextWindowErrorRoutesToPCC() async throws {
+    @Test func legacyLocalContextWindowErrorRoutesToPrivateCloud() async throws {
         let error = LanguageModelSession.GenerationError.exceededContextWindowSize(
             LanguageModelSession.GenerationError.Context(debugDescription: "Test context overflow")
         )
 
-        #expect(AppleIntelligenceProvider.shouldRouteToPCCGateway(for: error))
+        #expect(AppleIntelligenceProvider.shouldRouteToPrivateCloud(for: error))
     }
 
-    @Test func unrelatedLocalErrorDoesNotRouteToPCC() async throws {
+    @Test func unrelatedLocalErrorDoesNotRouteToPrivateCloud() async throws {
         let error = NSError(
             domain: "AppleIntelligenceTests",
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "The on-device model declined this request."]
         )
 
-        #expect(!AppleIntelligenceProvider.shouldRouteToPCCGateway(for: error))
+        #expect(!AppleIntelligenceProvider.shouldRouteToPrivateCloud(for: error))
     }
 
-    @Test func contextStyleErrorMessageRoutesToPCC() async throws {
+    @Test func contextStyleErrorMessageRoutesToPrivateCloud() async throws {
         let error = NSError(
             domain: "AppleIntelligenceTests",
             code: 2,
             userInfo: [NSLocalizedDescriptionKey: "Prompt context window exceeded for this request."]
         )
 
-        #expect(AppleIntelligenceProvider.shouldRouteToPCCGateway(for: error))
+        #expect(AppleIntelligenceProvider.shouldRouteToPrivateCloud(for: error))
     }
 
-    @Test func pccTerminalContextMessageRoutesThroughTerminalHelper() async throws {
-        #expect(FMPCCProvider.isPCCContextUnavailable("Private Cloud Compute is not available in this context. Please use the Terminal app."))
-    }
-
-    @Test func pccGeneratedContentParseFailureRoutesThroughTerminalHelper() async throws {
-        #expect(FMPCCProvider.shouldRetryViaTerminal("Error: Failed to parse generated content."))
-    }
-
-    @Test func pccTranscriptSaveLineIsRemovedFromResponse() async throws {
-        let output = """
-        Here is the inline replacement.
-        Transcript saved to: /Users/johnval/Aiassistant-CD908000-E7C3-4A70-BEE6-BBB17D2E0196
-        """
-
-        #expect(FMPCCProvider.cleanFMResponse(output) == "Here is the inline replacement.")
-    }
-
-    @Test func pccFencedJSONSummaryIsDisplayedAsPlainText() async throws {
-        let output = """
-        ```json
-        {
-          "summary": "The image shows a freight tracker.",
-          "shipment_count": 11
-        }
-        ```
-        Transcript saved to: /tmp/Aiassistant-test
-        """
-
-        #expect(FMPCCProvider.cleanFMResponse(output) == "The image shows a freight tracker.")
-    }
-
-    @Test func pccJSONWithoutSummaryIsDisplayedAsMarkdown() async throws {
-        let output = """
-        ```json
-        {"shipment_count": 11}
-        ```
-        """
-
-        #expect(FMPCCProvider.cleanFMResponse(output) == "**Shipment Count:** 11")
-    }
-
-    @Test func pccFollowUpJSONArrayIsDisplayedAsMarkdownList() async throws {
-        let output = """
-        ```json
-        {
-          "accounts": [
-            {"name": "acid", "handle": "@0393_tim"},
-            {"name": "JV", "handle": "@johnny_xx"}
-          ]
-        }
-        ```
-        """
-
-        let cleaned = FMPCCProvider.cleanFMResponse(output)
-        #expect(cleaned == """
-        **Accounts**
-
-        - **acid** (@0393_tim)
-        - **JV** (@johnny_xx)
-        """)
-        #expect(!cleaned.contains("```json"))
-    }
-
-    @Test func pccNormalMarkdownResponseIsPreserved() async throws {
-        let output = "The image shows **eleven shipments**."
-
-        #expect(FMPCCProvider.cleanFMResponse(output) == output)
-    }
-
-    @Test func currentPCCCLIResumesFromTheExplicitlySavedTranscript() async throws {
-        let arguments = FMPCCProvider.transcriptArguments(
-            existingTranscriptName: "Aiassistant-test",
-            transcriptName: "Aiassistant-test",
-            supportsResume: true
-        )
-
-        #expect(arguments.count == 4)
-        #expect(arguments[0] == "--resume")
-        #expect(arguments[1] == arguments[3])
-        #expect(arguments[2] == "--save-transcript")
-        #expect(!arguments.contains("--load-transcript"))
-    }
-
-    @Test func legacyPCCCLIStillUsesLoadTranscript() async throws {
-        let arguments = FMPCCProvider.transcriptArguments(
-            existingTranscriptName: "Aiassistant-test",
-            transcriptName: "Aiassistant-test",
-            supportsResume: false
-        )
-
-        #expect(arguments[0] == "--load-transcript")
-        #expect(arguments[1].hasSuffix("/.fm/sessions/Aiassistant-test.json"))
-        #expect(Array(arguments[2...]) == ["--save-transcript", "Aiassistant-test"])
+    @Test func legacyCLIProviderValueIsNoLongerSelectable() async throws {
+        #expect(AIProviderKind(rawValue: "apple_pcc") == nil)
     }
 
     @Test func emptyMarkdownArtifactsAreRemovedFromAIResponseText() async throws {
@@ -282,6 +191,115 @@ struct AiassistantTests {
         settings.selectedAIProvider = .coreAIGemma
 
         #expect(AppState.shared.activeProvider is CoreAIGemmaProvider)
+    }
+
+    @Test func localOpenAIEndpointDoesNotDuplicateV1OrChatCompletions() async throws {
+        let chatURL = try LocalOpenAIEndpoint.chatCompletionsURL(
+            from: "http://127.0.0.1:8080/v1/chat/completions"
+        )
+        let modelsURL = try LocalOpenAIEndpoint.modelsURL(
+            from: "127.0.0.1:8080/v1/models"
+        )
+
+        #expect(chatURL.absoluteString == "http://127.0.0.1:8080/v1/chat/completions")
+        #expect(modelsURL.absoluteString == "http://127.0.0.1:8080/v1/models")
+    }
+
+    @Test func localOpenAIRequestUsesOpenAIImageDataURLParts() async throws {
+        let messages = OpenAICompatibleLocalProvider.chatMessages(
+            systemPrompt: "Be concise.",
+            userPrompt: "Describe this.",
+            imageDataURLs: ["data:image/png;base64,AAAA"],
+            videos: nil
+        )
+        let request = LocalOpenAIChatCompletionRequest(
+            model: "test-model",
+            messages: messages,
+            temperature: 0,
+            maxTokens: 1024,
+            stream: false
+        )
+        let data = try JSONEncoder().encode(request)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let encodedMessages = try #require(json["messages"] as? [[String: Any]])
+        let systemMessage = try #require(encodedMessages.first)
+        let userMessage = try #require(encodedMessages.last)
+        let userContent = try #require(userMessage["content"] as? [[String: Any]])
+        let imagePart = try #require(userContent.last)
+        let imageURL = try #require(imagePart["image_url"] as? [String: Any])
+
+        #expect(json["model"] as? String == "test-model")
+        #expect(systemMessage["content"] as? String == "Be concise.")
+        #expect(userContent.first?["type"] as? String == "text")
+        #expect(userContent.first?["text"] as? String == "Describe this.")
+        #expect(imagePart["type"] as? String == "image_url")
+        #expect(imageURL["url"] as? String == "data:image/png;base64,AAAA")
+    }
+
+    @Test func localOpenAIRequestCanDisableModelThinking() throws {
+        let request = LocalOpenAIChatCompletionRequest(
+            model: "thinking-model",
+            messages: [LocalOpenAIChatMessage(role: "user", content: .text("Answer directly."))],
+            temperature: 0,
+            maxTokens: 1024,
+            stream: false,
+            chatTemplateKwargs: LocalOpenAIChatTemplateKwargs(enableThinking: false)
+        )
+        let data = try JSONEncoder().encode(request)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let templateArguments = try #require(json["chat_template_kwargs"] as? [String: Any])
+
+        #expect(templateArguments["enable_thinking"] as? Bool == false)
+    }
+
+    @Test func localOpenAIModelsResponseProducesUniqueNonEmptyModelIDs() throws {
+        let data = try #require("""
+        {
+          "object": "list",
+          "data": [
+            {"id": "model-a"},
+            {"id": "model-b"},
+            {"id": "model-a"},
+            {"id": "  "}
+          ]
+        }
+        """.data(using: .utf8))
+
+        #expect(OpenAICompatibleLocalProvider.modelIDs(fromModelsResponse: data) == ["model-a", "model-b"])
+    }
+
+    @Test func localOpenAISettingsPersist() async throws {
+        let settings = AppSettings.shared
+        let oldProvider = settings.selectedAIProvider
+        let oldBaseURL = settings.localOpenAIBaseURL
+        let oldModelID = settings.localOpenAIModelID
+        let oldAPIKey = settings.localOpenAIAPIKey
+        defer {
+            settings.selectedAIProvider = oldProvider
+            settings.localOpenAIBaseURL = oldBaseURL
+            settings.localOpenAIModelID = oldModelID
+            settings.localOpenAIAPIKey = oldAPIKey
+        }
+
+        settings.selectedAIProvider = .localOpenAI
+        settings.localOpenAIBaseURL = "http://localhost:1234/v1"
+        settings.localOpenAIModelID = "custom-model"
+        settings.localOpenAIAPIKey = "local-key"
+
+        #expect(UserDefaults.standard.string(forKey: "selected_ai_provider") == AIProviderKind.localOpenAI.rawValue)
+        #expect(UserDefaults.standard.string(forKey: "local_openai_base_url") == "http://localhost:1234/v1")
+        #expect(UserDefaults.standard.string(forKey: "local_openai_model_id") == "custom-model")
+        #expect(UserDefaults.standard.string(forKey: "local_openai_api_key") == "local-key")
+    }
+
+    @Test func appStateRoutesLocalOpenAIProvider() async throws {
+        let settings = AppSettings.shared
+        let oldProvider = settings.selectedAIProvider
+        defer { settings.selectedAIProvider = oldProvider }
+
+        settings.selectedAIProvider = .localOpenAI
+
+        #expect(AppState.shared.activeProvider is OpenAICompatibleLocalProvider)
     }
 
     private func temporaryDirectory() throws -> URL {

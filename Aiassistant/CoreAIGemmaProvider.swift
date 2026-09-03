@@ -51,11 +51,11 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
 
     private let baseURL = URL(string: "http://127.0.0.1:8080/v1")!
     private let visionBaseURL = URL(string: "http://127.0.0.1:8081/v1")!
-    private let pccFallbackProvider: FMPCCProvider?
+    private let cloudFallbackProvider: PrivateCloudComputeProvider?
     private var currentTask: Task<String, Error>?
 
-    init(pccFallbackProvider: FMPCCProvider? = nil) {
-        self.pccFallbackProvider = pccFallbackProvider
+    init(cloudFallbackProvider: PrivateCloudComputeProvider? = nil) {
+        self.cloudFallbackProvider = cloudFallbackProvider
     }
 
     var selectedModel: CoreAIGemmaModel {
@@ -172,19 +172,18 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
                 providerName: "\(AIProviderKind.coreAIGemma.fullDisplayName) (\(model.fullDisplayName))"
             )
         } catch {
-            if Self.shouldRouteToPCCGateway(for: error), let pccFallbackProvider {
+            if Self.shouldRouteToPrivateCloud(for: error), let cloudFallbackProvider {
                 generationTask.cancel()
-                let fallbackResponse = try await pccFallbackProvider.processText(
+                let fallbackResponse = try await cloudFallbackProvider.processText(
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     images: images,
                     videos: videos
                 )
                 return AIResponse(
-                    text: "\(Self.pccFallbackNotice)\n\n\(fallbackResponse.text)",
+                    text: "\(Self.cloudFallbackNotice)\n\n\(fallbackResponse.text)",
                     images: fallbackResponse.images,
-                    providerName: fallbackResponse.providerName,
-                    pccTranscriptName: fallbackResponse.pccTranscriptName
+                    providerName: fallbackResponse.providerName
                 )
             }
             throw error
@@ -217,9 +216,9 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         return pieces.joined(separator: "\n\n")
     }
 
-    static let pccFallbackNotice = "Local MLX context limit reached. Switched to Apple PCC."
+    static let cloudFallbackNotice = "Local MLX context limit reached. Switched to Apple Cloud."
 
-    static func shouldRouteToPCCGateway(for error: Error) -> Bool {
+    static func shouldRouteToPrivateCloud(for error: Error) -> Bool {
         if let gemmaError = error as? CoreAIGemmaProviderError {
             switch gemmaError {
             case .promptTooLong:

@@ -31,8 +31,8 @@ class AppState: ObservableObject {
     
     @Published var appleProvider: AppleIntelligenceProvider
     @Published var cloudProvider: PrivateCloudComputeProvider
-    @Published var pccProvider: FMPCCProvider
     @Published var coreAIGemmaProvider: CoreAIGemmaProvider
+    @Published var localOpenAIProvider: OpenAICompatibleLocalProvider
     @Published var selectedMode: InteractionMode = .chat
     
     @Published var customInstruction: String = ""
@@ -119,10 +119,10 @@ class AppState: ObservableObject {
             return appleProvider
         case .appleCloud:
             return cloudProvider
-        case .applePCC:
-            return pccProvider
         case .coreAIGemma:
             return coreAIGemmaProvider
+        case .localOpenAI:
+            return localOpenAIProvider
         }
     }
 
@@ -147,15 +147,15 @@ class AppState: ObservableObject {
                 images: images,
                 videos: videos
             )
-        case .applePCC:
-            return try await pccProvider.processText(
+        case .coreAIGemma:
+            return try await coreAIGemmaProvider.processText(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: images,
                 videos: videos
             )
-        case .coreAIGemma:
-            return try await coreAIGemmaProvider.processText(
+        case .localOpenAI:
+            return try await localOpenAIProvider.processText(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: images,
@@ -170,20 +170,20 @@ class AppState: ObservableObject {
             appleProvider.cancel()
         case .appleCloud:
             cloudProvider.cancel()
-        case .applePCC:
-            pccProvider.cancel()
         case .coreAIGemma:
             coreAIGemmaProvider.cancel()
+        case .localOpenAI:
+            localOpenAIProvider.cancel()
         }
     }
     
     // MARK: - Initialization
     private init() {
-        let pccProvider = FMPCCProvider()
-        self.cloudProvider = PrivateCloudComputeProvider()
-        self.pccProvider = pccProvider
-        self.appleProvider = AppleIntelligenceProvider(pccFallbackProvider: pccProvider)
-        self.coreAIGemmaProvider = CoreAIGemmaProvider(pccFallbackProvider: pccProvider)
+        let cloudProvider = PrivateCloudComputeProvider()
+        self.cloudProvider = cloudProvider
+        self.appleProvider = AppleIntelligenceProvider(cloudFallbackProvider: cloudProvider)
+        self.coreAIGemmaProvider = CoreAIGemmaProvider(cloudFallbackProvider: cloudProvider)
+        self.localOpenAIProvider = OpenAICompatibleLocalProvider()
         
         if !appleProvider.isAvailable {
             print("Warning: Apple Intelligence on-device model unavailable — \(appleProvider.availabilityDescription)")
