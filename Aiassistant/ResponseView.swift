@@ -200,6 +200,8 @@ struct ResponseView: View {
                         Color.clear
                     }
                     .ignoresSafeArea()
+                } else if themeStyle == "gradient" {
+                    GradientThemeBackground().ignoresSafeArea()
                 } else {
                     // Background gradient to match the quick actions window
                     LinearGradient(

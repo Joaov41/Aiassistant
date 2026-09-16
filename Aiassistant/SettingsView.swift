@@ -42,6 +42,8 @@ struct SettingsView: View {
                         Color.clear
                     }
                     .ignoresSafeArea()
+                } else if themeStyle == "gradient" {
+                    GradientThemeBackground().ignoresSafeArea()
                 } else {
                     ZStack {
                         // Add a blur layer first

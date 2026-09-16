@@ -23,34 +23,25 @@ struct WindowBackground: ViewModifier {
                     case .standard:
                         Color(.windowBackgroundColor)
                     case .gradient:
-                        if colorScheme == .light {
-                            LinearGradient(
-                                colors: [
-                                    Color(hex: "f1c6bc"),
-                                    Color(hex: "b4bbef"),
-                                    Color(hex: "e9d686"),
-                                    Color(hex: "b9c7ee")
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        } else {
-                            LinearGradient(
-                                colors: [
-                                    Color(hex: "18323D"),
-                                    Color(hex: "164066"),
-                                    Color(hex: "35423E"),
-                                    Color(hex: "4E4246")
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        }
+                        GradientThemeBackground()
                     case .glass:
                         GlassmorphicBackground()
                     }
                 }
             )
+    }
+}
+
+struct GradientThemeBackground: View {
+    @Environment(\.colorScheme) var colorScheme
+    var body: some View {
+        LinearGradient(
+            colors: colorScheme == .light
+                ? [Color(hex: "f1c6bc"), Color(hex: "b4bbef"), Color(hex: "e9d686"), Color(hex: "b9c7ee")]
+                : [Color(hex: "18323D"), Color(hex: "164066"), Color(hex: "35423E"), Color(hex: "4E4246")],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 }
 

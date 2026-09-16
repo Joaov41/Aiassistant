@@ -484,6 +484,8 @@ struct PopupView: View {
                             Color.clear
                         }
                         .ignoresSafeArea()
+                    } else if themeStyle == "gradient" {
+                        GradientThemeBackground().ignoresSafeArea()
                     } else {
                         ZStack {
                             Color(.windowBackgroundColor)
