@@ -157,7 +157,7 @@ struct ResponseView: View {
     @Environment(\.colorScheme) var colorScheme
     @AppStorage("use_gradient_theme") private var useGradientTheme = false
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     @State private var inputText: String = ""
     
     // New property for top inset (for title bar space)
@@ -194,12 +194,14 @@ struct ResponseView: View {
             Group {
                 if themeStyle == "glass" {
                     LiquidGlassBackground(
-                        variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                        variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                         cornerRadius: 0
                     ) {
                         Color.clear
                     }
                     .ignoresSafeArea()
+                } else if themeStyle == "gradient" {
+                    GradientThemeBackground().ignoresSafeArea()
                 } else {
                     // Background gradient to match the quick actions window
                     LinearGradient(
@@ -228,7 +230,7 @@ struct ResponseView: View {
                         Label(viewModel.showCopyConfirmation ? "Copied!" : "Copy Response",
                               systemImage: viewModel.showCopyConfirmation ? "checkmark" : "doc.on.doc")
                     }
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                     .animation(.easeInOut, value: viewModel.showCopyConfirmation)
                     .help("Copy assistant's responses to clipboard")
 
@@ -238,20 +240,20 @@ struct ResponseView: View {
                         Button(action: { viewModel.fontSize = max(10, viewModel.fontSize - 2) }) {
                             Image(systemName: "minus.magnifyingglass")
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .disabled(viewModel.fontSize <= 10)
                         .help("Decrease font size")
 
                         Button(action: { viewModel.fontSize = 14 }) {
                             Image(systemName: "arrow.clockwise")
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .help("Reset font size")
 
                         Button(action: { viewModel.fontSize = min(24, viewModel.fontSize + 2) }) {
                             Image(systemName: "plus.magnifyingglass")
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .disabled(viewModel.fontSize >= 24)
                         .help("Increase font size")
                     }
@@ -320,7 +322,7 @@ struct ResponseView: View {
                                 .frame(width: 24, height: 24)
                                 .symbolRenderingMode(.multicolor)
                         }
-                        .glassButtonStyle(variant: .v10, cornerRadius: 12)
+                        .glassButtonStyle(variant: .regular, cornerRadius: 12)
                         .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessingFollowUp) // Disable if empty or processing
                         .keyboardShortcut(.return, modifiers: []) // Allow sending with Enter
                     }
@@ -356,14 +358,14 @@ struct ChatMessageView: View {
     let fontSize: CGFloat
     @Environment(\.colorScheme) var colorScheme
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     
     // Use the same translucent material background as in other views
     var messageBackground: some View {
         Group {
             if themeStyle == "glass" {
                 LiquidGlassBackground(
-                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                     cornerRadius: 15
                 ) {
                     Color.clear

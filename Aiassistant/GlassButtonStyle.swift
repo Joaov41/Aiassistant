@@ -2,15 +2,15 @@ import SwiftUI
 
 struct GlassButtonStyle: ButtonStyle {
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     var useCustomVariant: Bool = false
-    var variant: GlassVariant = .v6
+    var variant: GlassVariant = .regular
     var cornerRadius: CGFloat = 8
     
     func makeBody(configuration: Configuration) -> some View {
         Group {
             if themeStyle == "glass" {
-                let selectedVariant = useCustomVariant ? variant : (GlassVariant(rawValue: glassVariantRaw) ?? .v11)
+                let selectedVariant = useCustomVariant ? variant : (GlassVariant(rawValue: glassVariantRaw) ?? .regular)
                 LiquidGlassBackground(variant: selectedVariant, cornerRadius: cornerRadius) {
                     configuration.label
                         .padding(.horizontal, 12)
@@ -48,7 +48,7 @@ struct GlassButtonStyle: ButtonStyle {
 
 struct GlassToggleStyle: ToggleStyle {
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    var variant: GlassVariant = .v6
+    var variant: GlassVariant = .regular
     var cornerRadius: CGFloat = 8
     
     func makeBody(configuration: Configuration) -> some View {
@@ -66,8 +66,8 @@ struct GlassToggleStyle: ToggleStyle {
 
 struct GlassButton<Label: View>: View {
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
-    var variant: GlassVariant = .v8
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
+    var variant: GlassVariant = .regular
     var cornerRadius: CGFloat = 8
     let action: () -> Void
     let label: () -> Label
@@ -107,11 +107,11 @@ struct GlassButton<Label: View>: View {
 }
 
 extension View {
-    func glassButtonStyle(variant: GlassVariant = .v6, cornerRadius: CGFloat = 8) -> some View {
+    func glassButtonStyle(variant: GlassVariant = .regular, cornerRadius: CGFloat = 8) -> some View {
         self.buttonStyle(GlassButtonStyle(useCustomVariant: true, variant: variant, cornerRadius: cornerRadius))
     }
     
-    func glassToggleStyle(variant: GlassVariant = .v6, cornerRadius: CGFloat = 8) -> some View {
+    func glassToggleStyle(variant: GlassVariant = .regular, cornerRadius: CGFloat = 8) -> some View {
         self.toggleStyle(GlassToggleStyle(variant: variant, cornerRadius: cornerRadius))
     }
 }
