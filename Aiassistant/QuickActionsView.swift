@@ -70,6 +70,14 @@ enum ActionType: Identifiable {
     }
 }
 
+private enum QuickActionReplacementError: LocalizedError {
+    case incompleteResponse
+
+    var errorDescription: String? {
+        "The model response stopped at its output-token limit."
+    }
+}
+
 struct QuickActionsView: View {
     @ObservedObject var appState: AppState
     @StateObject private var settings = AppSettings.shared // Access shared settings
@@ -84,6 +92,7 @@ struct QuickActionsView: View {
     @State private var contextType: ClipboardContentType = .none // Store the detected type
     @State private var selectedActionType: ActionType? = nil // Track selected action (predefined or custom)
     @State private var processingStatus: String? = nil // State for status message
+    @State private var actionTask: Task<Void, Never>?
 
     // State for adding custom prompts
     @State private var showingAddPromptAlert = false
@@ -341,6 +350,10 @@ struct QuickActionsView: View {
         .onReceive(appState.$selectedText) { _ in
             setupContext()
         }
+        .onDisappear {
+            actionTask?.cancel()
+            actionTask = nil
+        }
     }
     
     // Context preview view based on content type
@@ -523,7 +536,7 @@ struct QuickActionsView: View {
         print("Queueing action: \(actionType.displayName) on context: \(contextType)")
 
         // Start main async task for processing
-        Task {
+        actionTask = Task {
             // --- Update State on Main Thread FIRST ---
             await MainActor.run {
                 // Now modify state safely
@@ -554,6 +567,7 @@ struct QuickActionsView: View {
             // --- Capture text for inline replacement, or wait for URL content if applicable ---
             var finalInputText: String
             var inlineTargetApplication: NSRunningApplication?
+            var inlineReplacementTarget: TextReplacementTarget?
             let initialText = await appState.selectedText // Get text available *now*
 
             if inlineReplacementMode && currentContextType == .text {
@@ -581,7 +595,7 @@ struct QuickActionsView: View {
                 targetApp.activate(options: .activateIgnoringOtherApps)
                 try? await Task.sleep(nanoseconds: 300_000_000)
 
-                guard let externalText = AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
+                guard let externalText = await AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
                       !externalText.isEmpty else {
                     print("QuickActions inline replacement failed: could not copy selected text.")
                     await MainActor.run {
@@ -593,11 +607,24 @@ struct QuickActionsView: View {
                     return
                 }
 
+                do {
+                    inlineReplacementTarget = try AccessibilityHelper.captureReplacementTarget(
+                        expectedText: externalText,
+                        targetApplication: targetApp
+                    )
+                } catch {
+                    await MainActor.run {
+                        self.processingError = error.localizedDescription
+                        self.isProcessing = false
+                        self.selectedActionType = nil
+                        self.processingStatus = nil
+                    }
+                    return
+                }
+
                 finalInputText = externalText
                 await MainActor.run {
-                    appState.previousApplication = targetApp
-                    appState.selectedText = externalText
-                    appState.lastClipboardType = .text
+                    appState.setExternalSelection(externalText, from: targetApp)
                 }
             } else if currentContextType == .url {
                 print("DEBUG (QuickActionsView): Context is URL, entering wait loop...")
@@ -670,28 +697,33 @@ struct QuickActionsView: View {
                     videos: currentContextType == .video ? await appState.selectedVideos : []
                 )
 
-                if let inlineTargetApplication, response.images.isEmpty {
-                    await MainActor.run {
-                        print("Action '\(actionName)' completed. Replacing selected text inline.")
-
-                        if inlineTargetApplication.isTerminated {
-                            print("Target application was closed. Copying result to clipboard instead.")
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(response.text, forType: .string)
-                        } else {
-                            if isSpreadsheetApplication(inlineTargetApplication) {
-                                Thread.sleep(forTimeInterval: 0.2)
-                            }
-                            AccessibilityHelper.replaceTextInFocusedElement(
-                                with: response.text,
-                                targetApplication: inlineTargetApplication
-                            )
+                if inlineTargetApplication != nil, response.images.isEmpty,
+                   let inlineReplacementTarget {
+                    do {
+                        guard !response.isTruncated else { throw QuickActionReplacementError.incompleteResponse }
+                        try await AccessibilityHelper.replaceTextInCapturedTarget(
+                            with: response.text,
+                            target: inlineReplacementTarget
+                        )
+                        await MainActor.run {
+                            self.isProcessing = false
+                            self.selectedActionType = nil
+                            self.processingStatus = nil
+                            self.onComplete()
                         }
-
-                        self.isProcessing = false
-                        self.selectedActionType = nil
-                        self.processingStatus = nil
-                        self.onComplete()
+                    } catch {
+                        await MainActor.run {
+                            self.showResponseWindow(
+                                response: response,
+                                inputText: finalInputText,
+                                option: writingOption,
+                                title: "Result: \(actionName)"
+                            )
+                            self.processingError = "Result was not pasted: \(error.localizedDescription)"
+                            self.isProcessing = false
+                            self.selectedActionType = nil
+                            self.processingStatus = nil
+                        }
                     }
                     return
                 }
@@ -701,22 +733,12 @@ struct QuickActionsView: View {
                     print("Action '\(actionName)' completed. Showing response window.")
                     
                     // Pass the text that was ACTUALLY used in the prompt to ResponseView
-                    let responseView = ResponseView(
-                        content: response.text,
-                        selectedText: finalInputText,
+                    self.showResponseWindow(
+                        response: response,
+                        inputText: finalInputText,
                         option: writingOption,
-                        images: response.images,
-                        providerName: response.providerName,
-                        contentTopInset: 0
+                        title: "Result: \(actionName)"
                     )
-
-                    let window = ResponseWindow(
-                        with: responseView,
-                        title: "Result: \(actionName)",
-                        hasImages: !response.images.isEmpty
-                    )
-
-                    WindowManager.shared.addResponseWindow(window)
                     self.isProcessing = false // Use self here
                     self.selectedActionType = nil
                     self.processingStatus = nil // Clear status on success
@@ -735,6 +757,28 @@ struct QuickActionsView: View {
                 }
             }
         }
+    }
+
+    private func showResponseWindow(
+        response: AIResponse,
+        inputText: String,
+        option: WritingOption,
+        title: String
+    ) {
+        let responseView = ResponseView(
+            content: response.displayText,
+            selectedText: inputText,
+            option: option,
+            images: response.images,
+            providerName: response.providerName,
+            contentTopInset: 0
+        )
+        let window = ResponseWindow(
+            with: responseView,
+            title: title,
+            hasImages: !response.images.isEmpty
+        )
+        WindowManager.shared.addResponseWindow(window)
     }
 
     /// Clears the clipboard content and resets the context

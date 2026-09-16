@@ -26,8 +26,10 @@ enum InteractionMode: String, CaseIterable {
     // Add more modes if needed
 }
 
-class AppState: ObservableObject {
+@MainActor
+final class AppState: ObservableObject {
     static let shared = AppState()
+    let settings: AppSettings
     
     @Published var appleProvider: AppleIntelligenceProvider
     @Published var cloudProvider: PrivateCloudComputeProvider
@@ -76,6 +78,18 @@ class AppState: ObservableObject {
     @Published var showCaptureErrorAlert = false
     @Published var captureErrorAppName: String = ""
     @Published var capturedImageForConversation: Data? = nil
+    @Published private(set) var attachmentRevision: UInt = 0
+    @Published private(set) var isAttachmentLoading = false
+    private var attachmentTask: Task<Void, Never>?
+
+    var conversationContext: ConversationContext {
+        ConversationContext(
+            text: retainedTextContext.isEmpty ? selectedText : retainedTextContext,
+            isDocument: !retainedTextContext.isEmpty,
+            images: capturedImageForConversation.map { [$0] } ?? selectedImages,
+            videos: selectedVideos
+        )
+    }
 
     /// Tracks whether we've already auto-captured clipboard content after launch.
     var hasInitializedCapture: Bool = false
@@ -88,6 +102,11 @@ class AppState: ObservableObject {
 
     /// Clears attached chat context while leaving the system pasteboard untouched.
     func clearConversationContext() {
+        attachmentTask?.cancel()
+        attachmentTask = nil
+        attachmentRevision &+= 1
+        isAttachmentLoading = false
+        isProcessing = false
         selectedText = ""
         retainedTextContext = ""
         selectedImages = []
@@ -97,6 +116,49 @@ class AppState: ObservableObject {
         selectedAppForScreenshot = nil
         capturedScreenshotData = nil
         lastClipboardType = .none
+    }
+
+    func setExternalSelection(_ text: String, from application: NSRunningApplication) {
+        replaceAttachment(type: .text, name: nil, text: text)
+        previousApplication = application
+    }
+
+    private func replaceAttachment(
+        type: ClipboardContentType,
+        name: String?,
+        text: String = "",
+        retainedText: String = "",
+        images: [Data] = [],
+        videos: [Data] = [],
+        conversationImage: Data? = nil,
+        previewImage: Data? = nil,
+        expectedRevision: UInt? = nil
+    ) {
+        if let expectedRevision, expectedRevision != attachmentRevision { return }
+        if expectedRevision == nil {
+            attachmentTask?.cancel()
+            attachmentTask = nil
+            attachmentRevision &+= 1
+        }
+        isAttachmentLoading = false
+        isProcessing = false
+        selectedAppForScreenshot = nil
+        isSelectingAppForCapture = false
+        lastClipboardType = type
+        attachedContentName = name
+        selectedText = text
+        retainedTextContext = retainedText
+        selectedImages = images
+        selectedVideos = videos
+        capturedImageForConversation = conversationImage
+        capturedScreenshotData = previewImage
+    }
+
+    @discardableResult
+    func beginAttachmentImport(name: String?, type: ClipboardContentType = .none) -> UInt {
+        replaceAttachment(type: type, name: name)
+        isAttachmentLoading = true
+        return attachmentRevision
     }
 
     /// Refresh the list of current running applications for screenshot selection
@@ -114,7 +176,7 @@ class AppState: ObservableObject {
     // MARK: - Current Provider
     /// All AI functionality flows through this selected provider.
     var activeProvider: any AIProvider {
-        switch AppSettings.shared.selectedAIProvider {
+        switch settings.selectedAIProvider {
         case .localAppleFoundation:
             return appleProvider
         case .appleCloud:
@@ -132,60 +194,32 @@ class AppState: ObservableObject {
         images: [Data],
         videos: [Data]?
     ) async throws -> AIResponse {
-        switch AppSettings.shared.selectedAIProvider {
-        case .localAppleFoundation:
-            return try await appleProvider.processText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                videos: videos
-            )
-        case .appleCloud:
-            return try await cloudProvider.processText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                videos: videos
-            )
-        case .coreAIGemma:
-            return try await coreAIGemmaProvider.processText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                videos: videos
-            )
-        case .localOpenAI:
-            return try await localOpenAIProvider.processText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                videos: videos
-            )
-        }
+        let provider = activeProvider
+        return try await provider.processText(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            images: images,
+            videos: videos
+        )
     }
 
     func cancelActiveProvider() {
-        switch AppSettings.shared.selectedAIProvider {
-        case .localAppleFoundation:
-            appleProvider.cancel()
-        case .appleCloud:
-            cloudProvider.cancel()
-        case .coreAIGemma:
-            coreAIGemmaProvider.cancel()
-        case .localOpenAI:
-            localOpenAIProvider.cancel()
-        }
+        appleProvider.cancel()
+        cloudProvider.cancel()
+        coreAIGemmaProvider.cancel()
+        localOpenAIProvider.cancel()
     }
     
     // MARK: - Initialization
-    private init() {
+    init(settings: AppSettings = .shared, checkModelAvailability: Bool = true) {
+        self.settings = settings
         let cloudProvider = PrivateCloudComputeProvider()
         self.cloudProvider = cloudProvider
         self.appleProvider = AppleIntelligenceProvider(cloudFallbackProvider: cloudProvider)
-        self.coreAIGemmaProvider = CoreAIGemmaProvider(cloudFallbackProvider: cloudProvider)
-        self.localOpenAIProvider = OpenAICompatibleLocalProvider()
+        self.coreAIGemmaProvider = CoreAIGemmaProvider(cloudFallbackProvider: cloudProvider, settings: settings)
+        self.localOpenAIProvider = OpenAICompatibleLocalProvider(settings: settings)
         
-        if !appleProvider.isAvailable {
+        if checkModelAvailability, !appleProvider.isAvailable {
             print("Warning: Apple Intelligence on-device model unavailable — \(appleProvider.availabilityDescription)")
         }
 
@@ -194,35 +228,13 @@ class AppState: ObservableObject {
     // MARK: - Clipboard Checking
     @discardableResult
     private func populateSelectionFromPasteboard(_ pasteboard: NSPasteboard) -> Bool {
-        self.selectedText = ""
-        self.retainedTextContext = ""
-        self.selectedImages = []
-        self.selectedVideos = []
-        self.attachedContentName = nil
-
         if let rawString = pasteboard.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !rawString.isEmpty,
            let url = URL(string: rawString),
            let scheme = url.scheme?.lowercased(),
            ["http", "https"].contains(scheme) {
-            lastClipboardType = .url
-            self.attachedContentName = rawString
-            self.selectedText = "URL: \(rawString)"
-            self.retainedTextContext = self.selectedText
-            Task {
-                do {
-                    let fetched = try await self.fetchAndExtractURL(url)
-                    await MainActor.run {
-                        self.selectedText = "URL: \(rawString)\n\nContent: \(fetched)"
-                        self.retainedTextContext = self.selectedText
-                        self.selectedImages = []
-                        self.selectedVideos = []
-                    }
-                } catch {
-                    print("Error fetching URL in populateSelectionFromPasteboard: \(error)")
-                }
-            }
+            handleDroppedURL(url)
             return true
         }
 
@@ -242,418 +254,224 @@ class AppState: ObservableObject {
         }
         
         // If we reach here, there's nothing recognized in the clipboard
-        lastClipboardType = .none
-            self.selectedText = ""
-            self.retainedTextContext = ""
-            self.selectedImages = []
-            self.selectedVideos = []
-            self.attachedContentName = nil
+        clearConversationContext()
     }
     
     // MARK: - Drag and Drop Handling
     func handleDroppedURL(_ url: URL) {
-        guard let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme) else {
-            if url.isFileURL {
-                handleDroppedFile(url: url)
-            }
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+            if url.isFileURL { handleDroppedFile(url: url) }
             return
         }
-        
-        Task {
-            await MainActor.run {
-                self.selectedAppForScreenshot = nil
-                self.isSelectingAppForCapture = false
-                self.lastClipboardType = .url
-                self.selectedImages = []
-                self.selectedVideos = []
-                self.attachedContentName = url.absoluteString
-                self.selectedText = "URL: \(url.absoluteString)"
-                self.retainedTextContext = self.selectedText
-            }
-            
+
+        let initialText = "URL: \(url.absoluteString)"
+        let revision = beginAttachmentImport(name: url.absoluteString, type: .url)
+        selectedText = initialText
+        retainedTextContext = initialText
+        attachmentTask = Task {
             do {
-                let fetched = try await self.fetchAndExtractURL(url)
-                await MainActor.run {
-                    self.selectedText = "URL: \(url.absoluteString)\n\nContent: \(fetched)"
-                    self.retainedTextContext = self.selectedText
-                }
+                let fetched = try await fetchAndExtractURL(url)
+                try Task.checkCancellation()
+                replaceAttachment(
+                    type: .url,
+                    name: url.absoluteString,
+                    text: initialText + "\n\nContent: " + fetched,
+                    retainedText: initialText + "\n\nContent: " + fetched,
+                    expectedRevision: revision
+                )
+                attachmentTask = nil
             } catch {
-                print("Error fetching dropped URL \(url): \(error)")
+                guard attachmentRevision == revision else { return }
+                attachmentTask = nil
+                isAttachmentLoading = false
+                guard !Task.isCancelled else { return }
+                print("Error fetching dropped URL: \(error.localizedDescription)")
             }
         }
     }
-    
-    func handleDroppedFile(url: URL, displayName: String? = nil) {
+
+    func handleDroppedFile(url: URL, displayName: String? = nil, deleteAfterImport: Bool = false) {
         guard url.isFileURL else {
             handleDroppedURL(url)
             return
         }
-        
-        Task.detached { [weak self] in
-            guard let self else { return }
-            let fileName = displayName?.isEmpty == false ? displayName! : url.lastPathComponent
-            let standardizedURL = url.standardizedFileURL
-            print("DEBUG (handleDroppedFile): Received URL=\(standardizedURL.path), displayName=\(fileName)")
-            let accessGranted = standardizedURL.startAccessingSecurityScopedResource()
-            let shouldDeleteAfterUse = standardizedURL.path.hasPrefix(FileManager.default.temporaryDirectory.path)
+        let revision = beginAttachmentImport(name: displayName ?? url.lastPathComponent)
+        attachmentTask = Task.detached {
             defer {
-                if accessGranted {
-                    standardizedURL.stopAccessingSecurityScopedResource()
-                }
-                if shouldDeleteAfterUse {
-                    try? FileManager.default.removeItem(at: standardizedURL)
-                    print("DEBUG (handleDroppedFile): Cleaned up temporary file \(standardizedURL.lastPathComponent)")
-                }
+                if deleteAfterImport { try? FileManager.default.removeItem(at: url) }
             }
-            
-            let ext = standardizedURL.pathExtension.lowercased()
-            let fileType = (try? standardizedURL.resourceValues(forKeys: [.typeIdentifierKey]))?.typeIdentifier
-                .flatMap { UTType($0) } ?? UTType(filenameExtension: ext)
-            print("DEBUG (handleDroppedFile): ext=\(ext), uti=\(fileType?.identifier ?? "nil")")
-            
             do {
-                if let fileType, fileType.conforms(to: .pdf) {
-                    let data = try Data(contentsOf: standardizedURL)
-                    self.handleDroppedPDFData(data, fileName: fileName)
-                    print("DEBUG (handleDroppedFile): Treated as PDF")
-                    return
-                }
-                
-                if let fileType, fileType.conforms(to: .image) {
-                    let data = try Data(contentsOf: standardizedURL)
-                    self.handleDroppedImageData(data, fileName: fileName)
-                    print("DEBUG (handleDroppedFile): Treated as Image")
-                    return
-                }
-                
-                if let fileType, fileType.conforms(to: .movie) || VideoHandler.supportedFormats.contains(ext) {
-                    let videoData = VideoHandler.getVideoData(from: standardizedURL) ?? (try? Data(contentsOf: standardizedURL))
-                    if let videoData {
-                        self.handleDroppedVideoData(videoData, fileName: fileName)
-                        print("DEBUG (handleDroppedFile): Treated as Video")
+                let attachment = try AttachmentImporter.load(url: url, displayName: displayName)
+                try Task.checkCancellation()
+                await MainActor.run {
+                    guard self.attachmentRevision == revision else { return }
+                    self.attachmentTask = nil
+                    if let attachment {
+                        self.applyImportedAttachment(attachment, expectedRevision: revision)
                     } else {
-                        print("Unable to load video data from dropped file \(standardizedURL)")
-                    }
-                    return
-                }
-
-                if ext == "eml" {
-                    let data = try Data(contentsOf: standardizedURL)
-                    if let text = EMLTextExtractor.extract(from: data) {
-                        self.handleDroppedText(text, sourceName: fileName, sourceLabel: "EML Content")
-                        print("DEBUG (handleDroppedFile): Treated as EML")
-                    } else {
-                        print("Unable to extract EML text from dropped file \(standardizedURL)")
-                    }
-                    return
-                }
-                
-                let isLikelyTextFile: Bool = {
-                    if let fileType {
-                        if fileType.conforms(to: .plainText) || fileType.conforms(to: .text) {
-                            return true
-                        }
-                        if fileType.conforms(to: .utf8PlainText) || fileType.conforms(to: .utf16PlainText) {
-                            return true
-                        }
-                    }
-                    let textExtensions: Set<String> = [
-                        "txt", "md", "markdown", "rtf", "rtfd", "csv", "json",
-                        "log", "xml", "html", "htm", "yaml", "yml", "swift",
-                        "py", "js", "ts", "java", "c", "cpp", "m", "mm", "sh"
-                    ]
-                    return textExtensions.contains(ext)
-                }()
-                
-                if isLikelyTextFile {
-                    if let text = try? self.loadTextFromFile(at: standardizedURL) {
-                        self.handleDroppedText(text, sourceName: fileName)
-                        print("DEBUG (handleDroppedFile): Treated as Text (likely)")
-                        return
+                        self.isAttachmentLoading = false
+                        print("Unsupported dropped file: \(url.lastPathComponent)")
                     }
                 }
-                
-                if let fileType, fileType.conforms(to: .rtf),
-                   let data = try? Data(contentsOf: standardizedURL),
-                   let attributed = try? NSAttributedString(
-                    data: data,
-                    options: [
-                        .documentType: NSAttributedString.DocumentType.rtf
-                    ],
-                    documentAttributes: nil
-                   ) {
-                    self.handleDroppedText(attributed.string, sourceName: fileName)
-                    print("DEBUG (handleDroppedFile): Treated as RTF")
-                    return
-                }
-                
-                if let text = try? self.loadTextFromFile(at: standardizedURL) {
-                    self.handleDroppedText(text, sourceName: fileName)
-                    print("DEBUG (handleDroppedFile): Treated as Text (fallback)")
-                    return
-                }
-                
-                print("Unhandled dropped file type for URL: \(standardizedURL)")
             } catch {
-                print("Error processing dropped file \(standardizedURL): \(error)")
+                await MainActor.run {
+                    guard self.attachmentRevision == revision else { return }
+                    self.attachmentTask = nil
+                    self.isAttachmentLoading = false
+                    guard !Task.isCancelled else { return }
+                    print("Error processing dropped file: \(error.localizedDescription)")
+                }
             }
         }
     }
-    
+
+    func applyImportedAttachment(_ attachment: ImportedAttachment, expectedRevision: UInt) {
+        switch attachment {
+        case .image(let data, let name):
+            replaceAttachment(
+                type: .image, name: name, images: [data],
+                conversationImage: data, previewImage: data, expectedRevision: expectedRevision
+            )
+        case .video(let data, let name):
+            replaceAttachment(type: .video, name: name, videos: [data], expectedRevision: expectedRevision)
+        case .document(let content, let name, let label):
+            let text = "\(label) (\(name)):\n\n\(content)"
+            let type: ClipboardContentType = label == "PDF Content" ? .pdf : .text
+            replaceAttachment(type: type, name: name, text: text, retainedText: text, expectedRevision: expectedRevision)
+        }
+    }
+
     func handleDroppedImageData(_ data: Data, fileName: String? = nil) {
-        DispatchQueue.main.async {
-            self.selectedAppForScreenshot = nil
-            self.isSelectingAppForCapture = false
-            self.lastClipboardType = .image
-            self.selectedText = ""
-            self.retainedTextContext = ""
-            self.selectedVideos = []
-            self.attachedContentName = fileName?.isEmpty == false ? fileName : "Image"
-            self.selectedImages = [data]
-            self.capturedImageForConversation = data
-        }
+        replaceAttachment(
+            type: .image,
+            name: fileName?.isEmpty == false ? fileName : "Image",
+            images: [data],
+            conversationImage: data,
+            previewImage: data
+        )
     }
-    
+
     func handleDroppedVideoData(_ data: Data, fileName: String? = nil) {
-        DispatchQueue.main.async {
-            self.selectedAppForScreenshot = nil
-            self.isSelectingAppForCapture = false
-            self.lastClipboardType = .video
-            self.selectedText = ""
-            self.retainedTextContext = ""
-            self.selectedImages = []
-            self.attachedContentName = fileName?.isEmpty == false ? fileName : "Video"
-            self.selectedVideos = [data]
-        }
+        replaceAttachment(
+            type: .video,
+            name: fileName?.isEmpty == false ? fileName : "Video",
+            videos: [data]
+        )
     }
-    
+
     func handleDroppedText(_ text: String, sourceName: String? = nil, sourceLabel: String = "Text File") {
-        DispatchQueue.main.async {
-            self.selectedAppForScreenshot = nil
-            self.isSelectingAppForCapture = false
-            self.lastClipboardType = .text
-            self.selectedImages = []
-            self.selectedVideos = []
-            
-            if let sourceName, !sourceName.isEmpty {
-                self.attachedContentName = sourceName
-                self.selectedText = "\(sourceLabel) (\(sourceName)):\n\n\(text)"
-                self.retainedTextContext = self.selectedText
-                print("DEBUG (handleDroppedText): Updated selectedText for \(sourceName), length=\(text.count)")
-            } else {
-                self.attachedContentName = nil
-                self.selectedText = text
-                self.retainedTextContext = ""
-                print("DEBUG (handleDroppedText): Updated selectedText (no source name), length=\(text.count)")
-            }
-        }
+        let displayedText = sourceName?.isEmpty == false ? "\(sourceLabel) (\(sourceName!)):\n\n\(text)" : text
+        replaceAttachment(
+            type: .text,
+            name: sourceName?.isEmpty == false ? sourceName : nil,
+            text: displayedText,
+            retainedText: sourceName?.isEmpty == false ? displayedText : ""
+        )
     }
-    
+
     func handleDroppedPDFData(_ data: Data, fileName: String?) {
-        let text = PDFHandler.extractText(from: data)
-        self.handleDroppedPDF(text: text, fileName: fileName)
-    }
-    
-    private func handleDroppedPDF(text: String, fileName: String?) {
-        let displayName = (fileName?.isEmpty == false ? fileName! : "PDF Document")
-        DispatchQueue.main.async {
-            self.selectedAppForScreenshot = nil
-            self.isSelectingAppForCapture = false
-            self.lastClipboardType = .pdf
-            self.selectedImages = []
-            self.selectedVideos = []
-            self.attachedContentName = displayName
-            self.selectedText = "PDF Content (\(displayName)):\n\n\(text)"
-            self.retainedTextContext = self.selectedText
-            print("DEBUG (handleDroppedPDF): Updated selectedText for \(displayName), length=\(text.count)")
-        }
-    }
-    
-    private func loadTextFromFile(at url: URL) throws -> String {
-        let data = try Data(contentsOf: url)
-        let encodings: [String.Encoding] = [
-            .utf8,
-            .utf16,
-            .utf16LittleEndian,
-            .utf16BigEndian,
-            .unicode,
-            .macOSRoman,
-            .isoLatin1
-        ]
-        
-        for encoding in encodings {
-            if let string = String(data: data, encoding: encoding) {
-                print("DEBUG (loadTextFromFile): Decoded using \(encoding) for \(url.lastPathComponent), length=\(string.count)")
-                return string
+        let name = fileName?.isEmpty == false ? fileName! : "PDF Document"
+        let revision = beginAttachmentImport(name: name, type: .pdf)
+        attachmentTask = Task.detached {
+            let text = PDFHandler.extractText(from: data)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self.attachmentRevision == revision else { return }
+                self.attachmentTask = nil
+                let displayedText = "PDF Content (\(name)):\n\n\(text)"
+                self.replaceAttachment(
+                    type: .pdf, name: name, text: displayedText,
+                    retainedText: displayedText, expectedRevision: revision
+                )
             }
         }
-        
-        // Fallback: attempt to interpret as UTF-8 even if invalid bytes exist
-        let fallback = String(decoding: data, as: UTF8.self)
-        print("DEBUG (loadTextFromFile): Used UTF8 fallback for \(url.lastPathComponent), length=\(fallback.count)")
-        return fallback
     }
     
     // For scraping HTML
     func processURLFromClipboard() {
-        let pb = NSPasteboard.general
-        guard let clipboardString = pb.string(forType: .string),
-              let url = URL(string: clipboardString),
-              (url.scheme == "http" || url.scheme == "https") else {
-            print("No valid URL found in clipboard")
+        guard let rawValue = NSPasteboard.general.string(forType: .string),
+              let url = URL(string: rawValue),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             return
         }
-        
-        isProcessing = true
-        Task {
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let extractedText = self.extractTextFromHTML(data: data)
-                DispatchQueue.main.async {
-                    self.selectedText = extractedText
-                    self.retainedTextContext = extractedText
-                    self.isProcessing = false
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                }
-                print("Error processing URL: \(error.localizedDescription)")
-            }
-        }
+        handleDroppedURL(url)
     }
-    
-    /// Convert HTML data to plain text
+
     func extractTextFromHTML(data: Data) -> String {
         let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
             .documentType: NSAttributedString.DocumentType.html,
             .characterEncoding: String.Encoding.utf8.rawValue
         ]
-        if let attrString = try? NSAttributedString(data: data, options: options, documentAttributes: nil) {
-            return attrString.string
-        }
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-    
-    // MARK: - Optional PDF Handler
-    func handlePDFData(_ pdfData: Data) {
-        let text = PDFHandler.extractText(from: pdfData)
-        selectedText = text
+        return (try? NSAttributedString(data: data, options: options, documentAttributes: nil).string)
+            ?? String(data: data, encoding: .utf8)
+            ?? ""
     }
 
-    // This function was inside the extension, keep it as part of the main class now
+    func handlePDFData(_ pdfData: Data) {
+        handleDroppedPDFData(pdfData, fileName: nil)
+    }
+
     func captureExternalSelection() {
-        // Reset selected app and the selection mode when capturing external selection
-        self.selectedAppForScreenshot = nil
-        self.isSelectingAppForCapture = false
-        let previousText = self.selectedText
-        let previousClipboardType = self.lastClipboardType
-        
-        self.selectedImages = []
-        self.selectedVideos = []
-        
+        let previousText = selectedText
+        let previousType = lastClipboardType
         guard let targetApp = previousApplication ?? NSWorkspace.shared.frontmostApplication,
               targetApp.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            print("DEBUG (captureExternalSelection): No suitable target application for text capture.")
             return
         }
-        
-        Task.detached { [weak self] in
-            guard let self else { return }
-            let ourApp = NSRunningApplication.current
-            
+        let revision = beginAttachmentImport(name: nil, type: .text)
+        attachmentTask = Task {
             targetApp.activate(options: .activateIgnoringOtherApps)
-            try? await Task.sleep(nanoseconds: targetApp.isTerminated ? 0 : 350_000_000) // allow UI to catch up
-            
-            let copiedText = AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp)
-            
-            await MainActor.run {
-                if let copiedText = copiedText, !copiedText.isEmpty {
-                    self.selectedText = copiedText
-                    self.retainedTextContext = ""
-                    self.lastClipboardType = .text
-                } else {
-                    self.selectedText = previousText
-                    self.lastClipboardType = previousClipboardType
-                    print("DEBUG (captureExternalSelection): Failed to retrieve text from accessibility copy.")
-                }
-                
-                // Bring our app back to the front once capture completes
-                ourApp.activate(options: .activateIgnoringOtherApps)
+            try? await Task.sleep(for: .milliseconds(targetApp.isTerminated ? 0 : 350))
+            guard !Task.isCancelled else { return }
+            let copiedText = await AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp)
+            guard attachmentRevision == revision else { return }
+            attachmentTask = nil
+            if let copiedText, !copiedText.isEmpty {
+                replaceAttachment(type: .text, name: nil, text: copiedText, expectedRevision: revision)
+                previousApplication = targetApp
+            } else {
+                replaceAttachment(type: previousType, name: nil, text: previousText, expectedRevision: revision)
             }
+            NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
         }
     }
-    
-    /// Attempts to capture the window of the selected app and update state.
-    /// Should be called from the UI after the user picks an app.
-    // This function was inside the extension, keep it as part of the main class now
-    func captureSelectedAppWindow(appInfo: AppInfo) {
-        print("DEBUG (captureSelectedAppWindow): selected \(appInfo.name), pid=\(appInfo.id)")
-        // Reset selection mode flag
-        self.isSelectingAppForCapture = false
-        self.isProcessing = true // Indicate activity
-        self.selectedText = ""   // Clear other selections
-        self.retainedTextContext = ""
-        self.selectedVideos = []
-        self.selectedImages = [] // Clear previous images
-        self.capturedScreenshotData = nil
-        self.attachedContentName = nil
-        self.lastClipboardType = .none // Reset clipboard type initially
 
-        // Check Screen Recording Permissions (Basic Check)
-        // A more robust check would use CGRequestScreenCaptureAccess() if needed
-        if !CGPreflightScreenCaptureAccess() {
-            print("Screen Capture Access: Not granted. Requesting permission...")
-            let granted = CGRequestScreenCaptureAccess()
-            if !granted {
-                print("Screen Capture Access: User denied or did not grant permission.")
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                    self.showPermissionAlert = true
-                }
-                return
-            } else {
-                print("Screen Capture Access: Permission granted after request.")
-            }
+    func captureSelectedAppWindow(appInfo: AppInfo) {
+        let revision = beginAttachmentImport(name: "\(appInfo.name) screenshot", type: .image)
+        isProcessing = true
+
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            isProcessing = false
+            isAttachmentLoading = false
+            showPermissionAlert = true
+            return
         }
 
-        Task { // Perform capture off the main thread
+        attachmentTask = Task {
             do {
-                print("Attempting capture for PID: \(appInfo.id)")
                 let imageData = try await ScreenshotHelper.captureWindow(pid: appInfo.id)
-
-                // Update state on the main thread
-                DispatchQueue.main.async {
-                    print("Capture successful, updating state.")
-                    self.selectedImages = [imageData]
-                    self.capturedImageForConversation = imageData
-                    self.capturedScreenshotData = imageData
-                    self.selectedAppForScreenshot = appInfo
-                    self.attachedContentName = "\(appInfo.name) screenshot"
-                    self.lastClipboardType = .image
-                    self.isProcessing = false
-                }
-
-            } catch let error as ScreenCaptureError {
-                print("Screenshot capture failed: \(error)")
-                // Update state on the main thread
-                DispatchQueue.main.async {
-                    self.isSelectingAppForCapture = false
-                    self.isProcessing = false
-                    // Trigger the alert flag for the UI and store app name
-                    self.captureErrorAppName = appInfo.name
-                    self.showCaptureErrorAlert = true
-                }
+                try Task.checkCancellation()
+                guard attachmentRevision == revision else { return }
+                attachmentTask = nil
+                replaceAttachment(
+                    type: .image,
+                    name: "\(appInfo.name) screenshot",
+                    images: [imageData],
+                    conversationImage: imageData,
+                    previewImage: imageData,
+                    expectedRevision: revision
+                )
+                selectedAppForScreenshot = appInfo
+                isProcessing = false
             } catch {
-                print("An unexpected error occurred during screenshot capture: \(error)")
-                DispatchQueue.main.async {
-                    self.isSelectingAppForCapture = false
-                    self.isProcessing = false
-                    // Trigger generic error alert in the calling View
-                    self.captureErrorAppName = appInfo.name
-                    self.showCaptureErrorAlert = true
-                }
+                guard attachmentRevision == revision else { return }
+                attachmentTask = nil
+                isSelectingAppForCapture = false
+                isProcessing = false
+                isAttachmentLoading = false
+                guard !Task.isCancelled else { return }
+                captureErrorAppName = appInfo.name
+                showCaptureErrorAlert = true
             }
         }
     }

@@ -2,13 +2,15 @@ import SwiftUI
 
 // New NSWindow subclass specifically for the Quick Actions popup
 class QuickActionsWindow: NSWindow {
+    static let defaultContentSize = NSSize(width: 400, height: 350)
+
     private var hostingController: NSHostingController<QuickActionsView>?
     private weak var appState: AppState?
 
     init(appState: AppState, inlineReplacementMode: Bool = false) {
         // Initial content rect, will be adjusted
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 350, height: 250), // Default size
+            contentRect: NSRect(origin: .zero, size: Self.defaultContentSize),
             styleMask: [.closable, .resizable, .miniaturizable, .fullSizeContentView, .titled],
             backing: .buffered,
             defer: false
@@ -47,7 +49,7 @@ class QuickActionsWindow: NSWindow {
         self.contentView?.autoresizingMask = [.width, .height]
 
         // Set initial size
-        self.setContentSize(NSSize(width: 350, height: 250))
+        self.setContentSize(Self.defaultContentSize)
     }
 
     // Clean up the hosting controller when the window is no longer needed

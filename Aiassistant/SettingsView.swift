@@ -269,6 +269,9 @@ struct SettingsView: View {
                                 .foregroundColor(.white.opacity(0.75))
                             SecureField("Required by some servers", text: $settings.localOpenAIAPIKey)
                                 .textFieldStyle(.roundedBorder)
+                            if let error = settings.localOpenAICredentialError {
+                                Text(error).font(.caption).foregroundStyle(.red)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -298,6 +301,19 @@ struct SettingsView: View {
                         Toggle("Disable Model Thinking", isOn: $settings.localOpenAIDisableThinking)
                             .toggleStyle(.switch)
                             .help("Sends enable_thinking=false to servers that support chat template arguments.")
+
+                        HStack {
+                            Text("Max Output Tokens")
+                            Spacer()
+                            TextField("1024", value: $settings.localOpenAIMaxTokens, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 100)
+                                .onSubmit {
+                                    settings.localOpenAIMaxTokens = AppSettings.validOutputTokenLimit(settings.localOpenAIMaxTokens)
+                                }
+                            Stepper("Max Output Tokens", value: $settings.localOpenAIMaxTokens, in: 1...131_072, step: 256)
+                                .labelsHidden()
+                        }
 
                         HStack(spacing: 6) {
                             Circle()

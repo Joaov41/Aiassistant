@@ -6,7 +6,8 @@ import Combine // Import Combine for timer
 // Ensure WindowManager, PopupWindow, QuickActionsWindow, SettingsView, AppState etc. are defined correctly in other files.
 // Ensure AccessibilityHelper is defined correctly.
 
-class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate needed here
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate needed here
     private static var sharedStatusItem: NSStatusItem?
 
     // Keep track if the user triggered the app from a service
@@ -58,6 +59,11 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let launchArguments = ProcessInfo.processInfo.arguments
+
+        // Unit tests use the app as a host; do not create menus, monitors, or permission dialogs there.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
 
         NSApp.setActivationPolicy(.accessory)
         NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -242,8 +248,6 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
              return
         }
         print("Showing Main Popup Window")
-        appState.cancelActiveProvider()
-
         appState.hasInitializedCapture = true
         
         if let frontApp = NSWorkspace.shared.frontmostApplication,
@@ -252,10 +256,7 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
             appState.captureExternalSelection()
         } else {
              appState.previousApplication = nil
-             appState.selectedText = ""
-             appState.selectedImages = []
-             appState.selectedVideos = []
-             appState.lastClipboardType = .none
+             appState.clearConversationContext()
              print("Own app is frontmost, clearing selection context.")
         }
 
@@ -292,12 +293,12 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
             return
         }
         print("Showing Quick Actions Window")
+        let mouseAnchor = NSEvent.mouseLocation
 
         if popupWindow != nil {
             closePopupWindow() // Close main popup first
         }
 
-        appState.cancelActiveProvider()
         let shouldCaptureQuickActions = true
         appState.hasInitializedCapture = true
         
@@ -308,10 +309,7 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
             appState.captureExternalSelection()
          } else {
              appState.previousApplication = nil
-             appState.selectedText = ""
-             appState.selectedImages = []
-             appState.selectedVideos = []
-             appState.lastClipboardType = .none
+             appState.clearConversationContext()
              print("Own app is frontmost, clearing selection context.")
          }
 
@@ -320,10 +318,17 @@ class AppDelegate: NSObject, NSApplicationDelegate { // No NSWindowDelegate need
         self.quickActionsWindow = window // Update local reference
         WindowManager.shared.addQuickActionsWindow(window) // Register
 
-        window.setContentSize(NSSize(width: 350, height: 250))
-        window.positionNearMouse()
+        window.setContentSize(QuickActionsWindow.defaultContentSize)
+        window.positionNearMouse(at: mouseAnchor)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+
+        // SwiftUI applies its minimum content size during the first layout pass.
+        // Re-clamp using the original click position once that final frame is known.
+        DispatchQueue.main.async { [weak window] in
+            window?.contentView?.layoutSubtreeIfNeeded()
+            window?.positionNearMouse(at: mouseAnchor)
+        }
     }
 
     // ** CHANGED: Made internal (default access) **

@@ -3,12 +3,13 @@ import FoundationModels
 
 /// AI provider backed by Apple's on-device Foundation Model (FoundationModels framework, macOS 27 API).
 /// Runs entirely locally via Apple Intelligence — no API key, no network calls.
-class AppleIntelligenceProvider: ObservableObject, AIProvider {
+@MainActor
+final class AppleIntelligenceProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
     private let model = SystemLanguageModel.default
     private let cloudFallbackProvider: PrivateCloudComputeProvider?
-    private var currentTask: Task<Void, Never>?
+    private let tasks = ProviderTaskRegistry<AIResponse>()
 
     init(cloudFallbackProvider: PrivateCloudComputeProvider? = nil) {
         self.cloudFallbackProvider = cloudFallbackProvider
@@ -47,8 +48,18 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
 
     func processText(systemPrompt: String?, userPrompt: String, images: [Data], videos: [Data]?) async throws -> AIResponse {
         isProcessing = true
-        defer { isProcessing = false }
+        defer { isProcessing = !tasks.isEmpty }
+        return try await tasks.run {
+            try await self.generateResponse(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                images: images,
+                videos: videos
+            )
+        }
+    }
 
+    private func generateResponse(systemPrompt: String?, userPrompt: String, images: [Data], videos: [Data]?) async throws -> AIResponse {
         guard case .available = model.availability else {
             throw NSError(
                 domain: "AppleIntelligence",
@@ -100,8 +111,7 @@ class AppleIntelligenceProvider: ObservableObject, AIProvider {
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
+        tasks.cancelAll()
         isProcessing = false
     }
 

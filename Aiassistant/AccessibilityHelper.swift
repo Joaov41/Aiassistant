@@ -1,262 +1,232 @@
 import Cocoa
 import ApplicationServices
 
-class AccessibilityHelper {
-    
-    /// Check if the app has proper accessibility permissions
-    static func checkAccessibilityPermissions() -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        print("Accessibility permissions enabled: \(accessEnabled)")
-        return accessEnabled
-    }
-    
-    /// Simulate Cmd+C in the specified application (or current frontmost one) using HID system state, then read the pasteboard.
-    static func copyTextFromFocusedElement(targetApplication: NSRunningApplication? = nil) -> String? {
-        // First check accessibility permissions
-        guard checkAccessibilityPermissions() else {
-            print("Error: Accessibility permissions not granted")
-            return nil
-        }
-        
-        // Resolve the application we want to target
-        guard let resolvedApp = targetApplication ?? NSWorkspace.shared.frontmostApplication else {
-            print("Error: No target application found for copy operation")
-            return nil
-        }
-        
-        // Ensure the target app is active so the simulated key events go to the right place
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != resolvedApp.processIdentifier {
-            resolvedApp.activate(options: .activateIgnoringOtherApps)
-            Thread.sleep(forTimeInterval: 0.25)
-        }
-        
-        // Check if this is a spreadsheet application
-        let isSpreadsheetApp = resolvedApp.bundleIdentifier?.contains("excel") == true || 
-                               resolvedApp.bundleIdentifier?.contains("numbers") == true || 
-                               resolvedApp.bundleIdentifier?.contains("sheets") == true ||
-                               resolvedApp.localizedName?.lowercased().contains("excel") == true ||
-                               resolvedApp.localizedName?.lowercased().contains("numbers") == true ||
-                               resolvedApp.localizedName?.lowercased().contains("sheets") == true
-        
-        print("Starting copy operation in \(resolvedApp.localizedName ?? "Unknown")...")
-        print("Is spreadsheet app: \(isSpreadsheetApp)")
-        
-        // Store the current pasteboard contents
-        let pasteboard = NSPasteboard.general
-        let oldPasteboardItems = snapshotPasteboardItems(from: pasteboard)
-        let oldPasteboardChangeCount = pasteboard.changeCount
-        print("Initial pasteboard change count: \(oldPasteboardChangeCount)")
-        
-        // Clear the pasteboard to ensure we don't get stale data
-        pasteboard.clearContents()
-        Thread.sleep(forTimeInterval: 0.1)
-        
-        // Create event source targeting the application
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            print("Error creating CGEventSource for simulating copy.")
-            restorePasteboardItems(oldPasteboardItems, to: pasteboard)
-            return nil
-        }
-        
-        // Ensure we're using the correct key codes
-        let cmdKeyCode: CGKeyCode = 0x37  // Command key
-        let cKeyCode: CGKeyCode = 0x08    // 'C' key
-        
-        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true)
-        let cDown   = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: true)
-        let cUp     = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: false)
-        let cmdUp   = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
-        
-        // Set the Command flag on all events
-        let commandFlag: CGEventFlags = [.maskCommand]
-        cmdDown?.flags = commandFlag
-        cDown?.flags = commandFlag
-        cUp?.flags = commandFlag
-        cmdUp?.flags = commandFlag
-        
-        // Post the events with longer delays for spreadsheet apps
-        print("Sending copy key events to \(resolvedApp.localizedName ?? "Unknown")...")
-        
-        // Adjust timing for spreadsheet applications
-        let keyDelay = isSpreadsheetApp ? 0.3 : 0.2
-        
-        // First attempt with appropriate delays
-        cmdDown?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: keyDelay)
-        cDown?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: keyDelay)
-        cUp?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: keyDelay)
-        cmdUp?.post(tap: .cghidEventTap)
-        
-        // Initial delay before checking pasteboard - longer for spreadsheets
-        Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.5 : 0.3)
-        
-        // Wait for the pasteboard to be updated
-        let maxAttempts = isSpreadsheetApp ? 15 : 10 // More attempts for spreadsheets
-        var attempts = 0
-        var copiedText: String?
-        
-        print("Waiting for pasteboard update...")
-        while attempts < maxAttempts {
-            let currentChangeCount = pasteboard.changeCount
-            print("Attempt \(attempts + 1): Change count \(currentChangeCount)")
-            
-            if currentChangeCount != oldPasteboardChangeCount {
-                if let text = pasteboard.string(forType: .string), !text.isEmpty {
-                    print("Successfully copied text of length: \(text.count)")
-                    copiedText = text
-                    break
-                }
-            }
-            
-            // If we haven't succeeded after half the attempts, try sending the key events again
-            if attempts == maxAttempts / 2 {
-                print("Retrying copy operation...")
-                cmdDown?.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.4 : 0.3)
-                cDown?.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.4 : 0.3)
-                cUp?.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.4 : 0.3)
-                cmdUp?.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.4 : 0.3)
-            }
-            
-            // Wait longer between attempts for spreadsheet apps
-            Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.3 : 0.2)
-            attempts += 1
-        }
-        
-        // Restore original pasteboard content no matter the result
-        restorePasteboardItems(oldPasteboardItems, to: pasteboard)
-        
-        return copiedText
-    }
-    
-    /// Replace the external app's selected text by placing `newText` on the clipboard, reactivating the app,
-    /// and simulating a Cmd+V keystroke using HID system state.
-    static func replaceTextInFocusedElement(with newText: String, targetApplication: NSRunningApplication? = nil) {
-        // Check accessibility permissions first
-        guard checkAccessibilityPermissions() else {
-            print("Error: Accessibility permissions not granted")
-            return
-        }
-        
-        // Get the target application
-        let resolvedApp = targetApplication ?? AppState.shared.previousApplication
-        
-        guard let targetApp = resolvedApp else {
-            print("Error: No target application found")
-            return
-        }
-        
-        // Check if this is a spreadsheet application 
-        let isSpreadsheetApp = targetApp.bundleIdentifier?.contains("excel") == true || 
-                               targetApp.bundleIdentifier?.contains("numbers") == true || 
-                               targetApp.bundleIdentifier?.contains("sheets") == true ||
-                               targetApp.localizedName?.lowercased().contains("excel") == true ||
-                               targetApp.localizedName?.lowercased().contains("numbers") == true ||
-                               targetApp.localizedName?.lowercased().contains("sheets") == true
-        
-        print("Starting paste operation in \(targetApp.localizedName ?? "Unknown")...")
-        
-        // Store current clipboard content
-        let pasteboard = NSPasteboard.general
-        let oldClipboardItems = snapshotPasteboardItems(from: pasteboard)
-        
-        // Place the new text on the clipboard
-        pasteboard.clearContents()
-        Thread.sleep(forTimeInterval: 0.1)
-        pasteboard.setString(newText, forType: .string)
-        
-        // Verify the text was placed on the clipboard
-        guard let verifyText = pasteboard.string(forType: .string),
-              verifyText == newText else {
-            print("Error: Failed to place new text on clipboard")
-            return
-        }
-        
-        // Ensure the target application is frontmost and active
-        if !targetApp.isActive {
-            targetApp.activate(options: .activateIgnoringOtherApps)
-            // Give applications time to activate
-            Thread.sleep(forTimeInterval: 0.3)
-        }
-        
-        // Create event source
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            print("Error: Failed to create CGEventSource for simulating paste.")
-            return
-        }
-        
-        // Create key events
-        let cmdKeyCode: CGKeyCode = 0x37  // Command key
-        let vKeyCode: CGKeyCode = 0x09    // 'V' key
-        
-        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true)
-        let vDown   = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
-        let vUp     = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
-        let cmdUp   = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
-        
-        // Set the Command flag on all events
-        let commandFlag: CGEventFlags = [.maskCommand]
-        cmdDown?.flags = commandFlag
-        vDown?.flags = commandFlag
-        vUp?.flags = commandFlag
-        cmdUp?.flags = commandFlag
-        
-        // Send the paste events - longer delays for spreadsheets
-        print("Sending paste key events...")
-        cmdDown?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.3 : 0.2)
-        vDown?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.3 : 0.2)
-        vUp?.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: isSpreadsheetApp ? 0.3 : 0.2)
-        cmdUp?.post(tap: .cghidEventTap)
-        
-        // For spreadsheet applications, provide more time to process the paste
-        let waitTime = isSpreadsheetApp ? 0.5 : 0.3
-        print("Waiting \(waitTime) seconds for paste operation to complete...")
-        Thread.sleep(forTimeInterval: waitTime)
-        
-        // Restore the original clipboard content
-        restorePasteboardItems(oldClipboardItems, to: pasteboard)
-        print("Restored original clipboard content")
-        
-        print("Paste operation completed")
+struct TextReplacementTarget {
+    let application: NSRunningApplication
+    fileprivate let window: AXUIElement
+    fileprivate let element: AXUIElement
+    fileprivate let fingerprint: TextSelectionFingerprint
+}
+
+struct TextSelectionFingerprint: Equatable {
+    let selectedText: String
+    let rangeLocation: Int?
+    let rangeLength: Int?
+    let elementValue: String?
+
+    init(selectedText: String, selectedRange: CFRange?, elementValue: String?) {
+        self.selectedText = selectedText
+        self.rangeLocation = selectedRange?.location
+        self.rangeLength = selectedRange?.length
+        self.elementValue = elementValue
     }
 }
 
-extension AccessibilityHelper {
-    /// Capture the existing pasteboard items so we can restore them after synthetic copy/paste operations.
-    private static func snapshotPasteboardItems(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
-        guard let items = pasteboard.pasteboardItems else { return [] }
-        return items.map { item in
-            var dataMap: [NSPasteboard.PasteboardType: Data] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    dataMap[type] = data
-                }
-            }
-            return dataMap
+enum TextReplacementError: LocalizedError {
+    case permissionDenied
+    case targetUnavailable
+    case selectionUnavailable
+    case selectionChanged
+    case replacementUnsupported
+    case replacementFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .permissionDenied: return "Accessibility permission is required for inline replacement."
+        case .targetUnavailable: return "The original application or window is no longer available."
+        case .selectionUnavailable: return "The original text selection could not be verified."
+        case .selectionChanged: return "The original text selection changed, so the result was not pasted."
+        case .replacementUnsupported: return "This app does not permit safe replacement of the selected text."
+        case .replacementFailed(let message): return "The selected text could not be replaced: \(message)"
         }
     }
-    
-    /// Restore previously captured pasteboard items.
-    private static func restorePasteboardItems(_ items: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+}
+
+@MainActor
+enum AccessibilityHelper {
+    static func checkAccessibilityPermissions(prompt: Bool = true) -> Bool {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt]
+        return AXIsProcessTrustedWithOptions(options as CFDictionary)
+    }
+
+    static func copyTextFromFocusedElement(targetApplication: NSRunningApplication? = nil) async -> String? {
+        guard checkAccessibilityPermissions() else { return nil }
+        guard let app = targetApplication ?? NSWorkspace.shared.frontmostApplication, !app.isTerminated else {
+            return nil
+        }
+
+        if !app.isActive {
+            app.activate(options: .activateIgnoringOtherApps)
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard !Task.isCancelled else { return nil }
+
+        let pasteboard = NSPasteboard.general
+        let originalItems = snapshotPasteboardItems(from: pasteboard)
+        pasteboard.clearContents()
+        let preparedChangeCount = pasteboard.changeCount
+
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false) else {
+            restorePasteboardItems(originalItems, to: pasteboard)
+            return nil
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.postToPid(app.processIdentifier)
+        keyUp.postToPid(app.processIdentifier)
+
+        let attempts = isSpreadsheetApplication(app) ? 15 : 10
+        let delay = isSpreadsheetApplication(app) ? Duration.milliseconds(250) : .milliseconds(150)
+        var copiedText: String?
+        for _ in 0..<attempts {
+            guard !Task.isCancelled else { break }
+            try? await Task.sleep(for: delay)
+            if pasteboard.changeCount != preparedChangeCount,
+               let text = pasteboard.string(forType: .string),
+               !text.isEmpty {
+                copiedText = text
+                break
+            }
+        }
+
+        // Restore only if the clipboard still contains the synthetic copy result.
+        if pasteboard.string(forType: .string) == copiedText {
+            restorePasteboardItems(originalItems, to: pasteboard)
+        }
+        return copiedText
+    }
+
+    static func captureReplacementTarget(
+        expectedText: String,
+        targetApplication: NSRunningApplication
+    ) throws -> TextReplacementTarget {
+        guard checkAccessibilityPermissions() else { throw TextReplacementError.permissionDenied }
+        guard !targetApplication.isTerminated else { throw TextReplacementError.targetUnavailable }
+        let appElement = AXUIElementCreateApplication(targetApplication.processIdentifier)
+        guard let window = elementAttribute(appElement, kAXFocusedWindowAttribute),
+              let element = elementAttribute(appElement, kAXFocusedUIElementAttribute) else {
+            throw TextReplacementError.selectionUnavailable
+        }
+        let fingerprint = selectionFingerprint(for: element)
+        guard fingerprint.selectedText == expectedText else { throw TextReplacementError.selectionUnavailable }
+        return TextReplacementTarget(
+            application: targetApplication,
+            window: window,
+            element: element,
+            fingerprint: fingerprint
+        )
+    }
+
+    static func replaceTextInCapturedTarget(
+        with newText: String,
+        target: TextReplacementTarget
+    ) async throws {
+        guard checkAccessibilityPermissions() else { throw TextReplacementError.permissionDenied }
+        let app = target.application
+        guard !app.isTerminated else { throw TextReplacementError.targetUnavailable }
+
+        if !app.isActive {
+            app.activate(options: .activateIgnoringOtherApps)
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        try Task.checkCancellation()
+
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        guard let currentWindow = elementAttribute(appElement, kAXFocusedWindowAttribute),
+              CFEqual(currentWindow, target.window),
+              let currentElement = elementAttribute(appElement, kAXFocusedUIElementAttribute),
+              CFEqual(currentElement, target.element) else {
+            throw TextReplacementError.selectionChanged
+        }
+        let currentFingerprint = selectionFingerprint(for: currentElement)
+        guard currentFingerprint == target.fingerprint else {
+            throw TextReplacementError.selectionChanged
+        }
+
+        var isSettable = DarwinBoolean(false)
+        let settableStatus = AXUIElementIsAttributeSettable(
+            currentElement,
+            kAXSelectedTextAttribute as CFString,
+            &isSettable
+        )
+        guard settableStatus == .success, isSettable.boolValue else {
+            throw TextReplacementError.replacementUnsupported
+        }
+        let status = AXUIElementSetAttributeValue(
+            currentElement,
+            kAXSelectedTextAttribute as CFString,
+            newText as CFString
+        )
+        guard status == .success else {
+            throw TextReplacementError.replacementFailed("Accessibility error \(status.rawValue).")
+        }
+    }
+
+    private static func elementAttribute(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private static func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private static func rangeAttribute(_ element: AXUIElement, _ attribute: String) -> CFRange? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard
+              AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    private static func selectionFingerprint(for element: AXUIElement) -> TextSelectionFingerprint {
+        TextSelectionFingerprint(
+            selectedText: stringAttribute(element, kAXSelectedTextAttribute) ?? "",
+            selectedRange: rangeAttribute(element, kAXSelectedTextRangeAttribute),
+            elementValue: stringAttribute(element, kAXValueAttribute)
+        )
+    }
+
+    private static func isSpreadsheetApplication(_ app: NSRunningApplication) -> Bool {
+        let identifier = app.bundleIdentifier?.lowercased() ?? ""
+        let name = app.localizedName?.lowercased() ?? ""
+        return identifier.contains("excel") || identifier.contains("numbers") || identifier.contains("sheets")
+            || name.contains("excel") || name.contains("numbers") || name.contains("sheets")
+    }
+
+    private static func snapshotPasteboardItems(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in
+                item.data(forType: type).map { (type, $0) }
+            })
+        }
+    }
+
+    private static func restorePasteboardItems(
+        _ items: [[NSPasteboard.PasteboardType: Data]],
+        to pasteboard: NSPasteboard
+    ) {
         pasteboard.clearContents()
         guard !items.isEmpty else { return }
-        let restoredItems: [NSPasteboardItem] = items.map { dataMap in
+        let restoredItems = items.map { stored -> NSPasteboardItem in
             let item = NSPasteboardItem()
-            for (type, data) in dataMap {
-                item.setData(data, forType: type)
-            }
+            for (type, data) in stored { item.setData(data, forType: type) }
             return item
         }
-        
         pasteboard.writeObjects(restoredItems)
     }
 }

@@ -1,33 +1,10 @@
 import SwiftUI
 import MarkdownUI // Make sure this package is added to your project and imported
 
-// MARK: - Data Model for Chat Messages
-
-// Ensure this struct is defined ONLY ONCE, in this file (ResponseView.swift).
-struct ChatMessage: Identifiable, Equatable {
-    let id = UUID()
-    let role: String // "user" or "assistant"
-    let content: String
-    let images: [Data] // Ensure Data is known (Foundation)
-    let providerName: String?
-    let timestamp: Date = Date()
-
-    init(role: String, content: String, images: [Data] = [], providerName: String? = nil) {
-        self.role = role
-        self.content = content
-        self.images = images
-        self.providerName = providerName
-    }
-
-    // Equatable conformance
-    static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
-        lhs.id == rhs.id // ID is enough for identity in this context
-    }
-}
-
 // MARK: - View Model for ResponseView Logic
 
 // Ensure this class is defined ONLY ONCE, in this file (ResponseView.swift).
+@MainActor
 final class ResponseViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var fontSize: CGFloat = 14
@@ -42,6 +19,7 @@ final class ResponseViewModel: ObservableObject {
     
     // Add a dedicated cancellation token for cleanup
     private var cancellationTask: Task<Void, Never>?
+    private var requestID: UUID?
     
     deinit {
         print("🗑️ ResponseViewModel deinit")
@@ -81,135 +59,65 @@ final class ResponseViewModel: ObservableObject {
 
     func processFollowUpQuestion(_ question: String, completion: @escaping () -> Void) {
         let trimmedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuestion.isEmpty else {
+        guard !trimmedQuestion.isEmpty, let appState = appStateRef else {
             completion()
             return
         }
 
-        let userMessage = ChatMessage(role: "user", content: trimmedQuestion)
-        var promptMessages: [ChatMessage] = []
-        self.messages.append(userMessage)
-        self.isProcessingFollowUp = true
-        promptMessages = self.messages
-
-        // Cancel any previous task
+        let provider = appState.activeProvider
+        let history = messages.compactMap { message -> AIConversationTurn? in
+            guard let role = AIConversationTurn.Role(rawValue: message.role) else { return nil }
+            return AIConversationTurn(role: role, content: message.content)
+        }
+        messages.append(ChatMessage(role: "user", content: trimmedQuestion))
+        isProcessingFollowUp = true
         cancellationTask?.cancel()
-        
-        // Create a new task
+        let id = UUID()
+        requestID = id
+
         cancellationTask = Task { [weak self] in
-            guard let self = self,
-                  let appState = self.appStateRef else {
-                await MainActor.run {
+            guard let self else { completion(); return }
+            defer {
+                if self.requestID == id {
+                    self.requestID = nil
+                    self.isProcessingFollowUp = false
+                    self.cancellationTask = nil
                     completion()
                 }
-                return
             }
-            
+
+            let context = ConversationContext(
+                text: self.initialSelectedText,
+                isDocument: !self.initialSelectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
+            var request = context.request(
+                for: trimmedQuestion,
+                systemPrompt: context.isDocument ? nil : self.initialOption.systemPrompt
+            )
+            request.history = history
+
             do {
-                // Build conversation history
-                let conversationHistory = promptMessages.map { msg in
-                    "\(msg.role.capitalized): \(msg.content)"
-                }.joined(separator: "\n\n")
-                let originalContext = self.initialSelectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let backgroundContext = originalContext.isEmpty
-                    ? ""
-                    : """
-
-                    Secondary background context from the original selection, if relevant. Ignore this if it conflicts with the chat transcript:
-                    ---
-                    \(originalContext)
-                    ---
-                    """
-                
-                let combinedPrompt = """
-                VERY IMPORTANT: Respond based on the chat transcript first. DO NOT generate or edit images.
-                Answer the latest User message directly.
-                Resolve pronouns like "it", "that", and "this" from the immediately preceding assistant/user messages.
-                If the latest question refers to the prior answer, do not search the secondary background for unrelated dates or entities.
-
-                Chat transcript:
-                ---
-                \(conversationHistory)
-                ---
-                Latest User message:
-                \(trimmedQuestion)
-                \(backgroundContext)
-                """
-
-                // Debug log full conversation history length
-                print("DEBUG: Full conversationHistory length: \(conversationHistory.count)")
-
-                let strictSystemPrompt = originalContext.isEmpty ? self.initialOption.systemPrompt : """
-                You are a precise document extraction assistant. Use only the provided document/background context and chat transcript.
-                If an amount, currency, date, or field is not explicitly present, say it is not found.
-                Do not infer subtotals, taxes, totals, conversions, or missing values unless the user explicitly asks you to calculate from listed amounts.
-                """
-                let response = try await appState.processWithActiveProvider(
-                    systemPrompt: strictSystemPrompt,
-                    userPrompt: combinedPrompt,
-                    images: [],
-                    videos: []
-                )
-
-                let assistantMessage = ChatMessage(
+                let response = try await provider.processConversation(request, onUpdate: nil)
+                guard self.requestID == id, !Task.isCancelled else { return }
+                self.messages.append(ChatMessage(
                     role: "assistant",
                     content: response.text,
                     images: response.images,
-                    providerName: response.providerName
-                )
-
-                // Check if task was cancelled
-                if Task.isCancelled {
-                    print("Follow-up task was cancelled")
-                    await MainActor.run {
-                        self.isProcessingFollowUp = false
-                        completion()
-                    }
-                    return
-                }
-
-                // Update UI on main thread
-                await MainActor.run {
-                    guard !Task.isCancelled else { 
-                        self.isProcessingFollowUp = false
-                        completion()
-                        return 
-                    }
-                    self.messages.append(assistantMessage)
-                    self.isProcessingFollowUp = false
-                    completion()
-                    print("Follow-up processed.")
-                }
+                    providerName: response.providerName,
+                    isTruncated: response.isTruncated
+                ))
             } catch {
-                if Task.isCancelled {
-                    print("Follow-up task was cancelled during error handling")
-                    await MainActor.run {
-                        self.isProcessingFollowUp = false
-                        completion()
-                    }
-                    return
-                }
-                
-                let errorMessage = "Error processing follow-up: \(error.localizedDescription)"
-                let errorChatMessage = ChatMessage(role: "assistant", content: errorMessage)
-                print(errorMessage)
-                
-                // Update UI on main thread
-                await MainActor.run {
-                    guard !Task.isCancelled else { 
-                        self.isProcessingFollowUp = false
-                        completion()
-                        return 
-                    }
-                    self.messages.append(errorChatMessage)
-                    self.isProcessingFollowUp = false
-                    completion()
-                }
+                guard self.requestID == id, !Task.isCancelled else { return }
+                self.messages.append(ChatMessage(role: "error", content: error.localizedDescription))
             }
         }
     }
 
     func clearConversation() {
+        requestID = nil
+        cancellationTask?.cancel()
+        cancellationTask = nil
+        isProcessingFollowUp = false
         // Keep only the initial assistant message if needed, or clear all
         if let firstMessage = messages.first, firstMessage.role == "assistant" {
             messages = [firstMessage]
