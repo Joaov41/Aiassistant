@@ -13,7 +13,7 @@ struct SettingsView: View {
     @ObservedObject var appState: AppState
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariant: Int = 11
+    @AppStorage("glass_variant") private var glassVariant: Int = 0
     @State private var cloudAvailabilityDescription = "Checking Apple Cloud availability..."
     @State private var isCheckingCloudAvailability = false
     @State private var cloudAvailabilityTask: Task<Void, Never>?
@@ -36,7 +36,7 @@ struct SettingsView: View {
             Group {
                 if themeStyle == "glass" {
                     LiquidGlassBackground(
-                        variant: GlassVariant(rawValue: glassVariant) ?? .v11,
+                        variant: GlassVariant(rawValue: glassVariant) ?? .regular,
                         cornerRadius: 0
                     ) {
                         Color.clear
@@ -128,18 +128,19 @@ struct SettingsView: View {
                                 Text("Style:")
                                     .fontWeight(.medium)
                                     .foregroundColor(.white.opacity(0.8))
-                                Slider(value: Binding(
-                                    get: { Double(glassVariant) },
-                                    set: { glassVariant = Int($0) }
-                                ), in: 0...19, step: 1)
-                                Text("\(glassVariant)")
-                                    .frame(width: 30)
-                                    .monospacedDigit()
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white.opacity(0.8))
+                                Picker("Style:", selection: Binding(
+                                    get: { GlassVariant(rawValue: glassVariant) ?? .regular },
+                                    set: { glassVariant = $0.rawValue }
+                                )) {
+                                    ForEach(GlassVariant.allCases) { variant in
+                                        Text(variant.displayName).tag(variant)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
                             }
-                            
-                            Text("Experiment with different glass variants (0-19)")
+
+                            Text("Choose how the Liquid Glass material renders")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.6))
                                 .fontWeight(.medium)
@@ -327,7 +328,7 @@ struct SettingsView: View {
                             Button(isTestingLocalOpenAIConnection ? "Testing..." : "Test & Load Models") {
                                 testLocalOpenAIConnection()
                             }
-                            .glassButtonStyle(variant: .v8)
+                            .glassButtonStyle(variant: .regular)
                             .disabled(isTestingLocalOpenAIConnection)
                         }
                     }
@@ -361,7 +362,7 @@ struct SettingsView: View {
                     Button(isCheckingCloudAvailability ? "Checking..." : "Check Cloud") {
                         checkCloudAvailability()
                     }
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                     .disabled(isCheckingCloudAvailability)
                 }
 
@@ -381,7 +382,7 @@ struct SettingsView: View {
                     Button("Open Apple Intelligence Settings") {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")!)
                     }
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                 }
             }
 
@@ -392,7 +393,7 @@ struct SettingsView: View {
                  Button(showOnlyApiSetup ? "Complete Setup" : "Save & Close") {
                      saveSettings()
                  }
-                 .glassButtonStyle(variant: .v8)
+                 .glassButtonStyle(variant: .regular)
                  .scaleEffect(1.1)
             }
 

@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 struct PopupView: View {
     @ObservedObject var appState: AppState
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     
     // Local chat state for the conversation with unique IDs and image support
     @StateObject private var conversation = ConversationController()
@@ -74,7 +74,7 @@ struct PopupView: View {
         Group {
             if themeStyle == "glass" {
                 LiquidGlassBackground(
-                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11, 
+                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular, 
                     cornerRadius: 12
                 ) {
                     Color.clear
@@ -122,7 +122,7 @@ struct PopupView: View {
 		                                        selectedReplyText = ""
 		                                    }
 		                                    .font(.caption)
-		                                    .glassButtonStyle(variant: .v12)
+		                                    .glassButtonStyle(variant: .regular)
 		                                    .padding(.top, 4)
 		                                    .padding(.trailing, 4)
 		                                    .help("Use the selected reply text as context for your next question")
@@ -157,7 +157,7 @@ struct PopupView: View {
                                                         .background(Color.black.opacity(0.7))
                                                         .clipShape(Circle())
                                                 }
-                                                .glassButtonStyle(variant: .v10, cornerRadius: 15)
+                                                .glassButtonStyle(variant: .regular, cornerRadius: 15)
                                                 .padding(8)
                                                 .scaleEffect(1.2)
                                             }
@@ -180,7 +180,7 @@ struct PopupView: View {
                                             saveImage(imageData)
                                         }
                                         .font(.caption)
-                                        .glassButtonStyle(variant: .v12)
+                                        .glassButtonStyle(variant: .regular)
                                         
                                         if item.id == conversation.messages.last?.id && item.images.contains(where: { $0 == lastGeneratedImage }) {
                                             Text("Tip: You can request changes to this image")
@@ -195,7 +195,7 @@ struct PopupView: View {
                                                 NSApp.keyWindow?.makeFirstResponder(nil)
                                             }
                                             .font(.caption)
-                                            .glassButtonStyle(variant: .v14)
+                                            .glassButtonStyle(variant: .regular)
                                             .padding(.top, 4)
                                             .help("The AI will describe changes to this image based on your request")
                                         }
@@ -230,14 +230,14 @@ struct PopupView: View {
                     Label("Chat", systemImage: "bubble.left.and.bubble.right")
                         .frame(maxWidth: .infinity)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .opacity(appState.selectedMode == .chat ? 1.0 : 0.6)
                 
                 Button(action: { appState.selectedMode = .rewrite }) {
                     Label("Rewrite", systemImage: "pencil.line")
                         .frame(maxWidth: .infinity)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .opacity(appState.selectedMode == .rewrite ? 1.0 : 0.6)
             }
             .padding(.horizontal)
@@ -258,7 +258,7 @@ struct PopupView: View {
                         }
                     }
                     .padding(.top, 6)
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -288,7 +288,7 @@ struct PopupView: View {
                     Text(appState.selectedMode == .rewrite ? "Rewrite" : "Send")
                         .fontWeight(.medium)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .disabled(isProcessing || userInput.isEmpty)
             }
             .padding()
@@ -298,7 +298,7 @@ struct PopupView: View {
             Button(action: startNewChat) {
                 Label("New Chat", systemImage: "plus.message")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .padding(.leading, 12)
             
             Spacer()
@@ -309,7 +309,7 @@ struct PopupView: View {
             }) {
                 Label("Capture Window", systemImage: "rectangle.on.rectangle")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .help("Capture a screenshot from another application window")
             
             Spacer()
@@ -317,7 +317,7 @@ struct PopupView: View {
             Button(action: copyChatToClipboard) {
                 Label("Copy", systemImage: "doc.on.doc")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .padding(.trailing, 12)
         }
             .padding(.bottom, 8)
@@ -478,7 +478,7 @@ struct PopupView: View {
                 Group {
                     if themeStyle == "glass" {
                         LiquidGlassBackground(
-                            variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                            variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                             cornerRadius: 0
                         ) {
                             Color.clear
@@ -1205,7 +1205,7 @@ struct AppSelectionView: View {
                         }
                         .contentShape(Rectangle()) // Make entire HStack tappable
                     }
-                    .glassButtonStyle(variant: .v8) // Use plain style for list items
+                    .glassButtonStyle(variant: .regular) // Use plain style for list items
                 }
             }
             .listStyle(InsetListStyle()) // Modern list style

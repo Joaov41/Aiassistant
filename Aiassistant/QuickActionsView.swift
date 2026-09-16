@@ -99,7 +99,7 @@ struct QuickActionsView: View {
     @State private var newPromptText: String = ""
 
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     var useGradient: Bool { themeStyle == "gradient" }
 
     private var appDelegate: AppDelegate? {
@@ -123,7 +123,7 @@ struct QuickActionsView: View {
         Group {
             if themeStyle == "glass" {
                 LiquidGlassBackground(
-                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                     cornerRadius: 12
                 ) {
                     Color.clear
@@ -142,7 +142,7 @@ struct QuickActionsView: View {
             Group {
                 if themeStyle == "glass" {
                     LiquidGlassBackground(
-                        variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                        variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                         cornerRadius: 0
                     ) {
                         Color.clear
@@ -189,7 +189,7 @@ struct QuickActionsView: View {
                                         }
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     }
-                                    .glassButtonStyle(variant: .v8)
+                                    .glassButtonStyle(variant: .regular)
                                     .disabled(isProcessing)
                                 }
                             }
@@ -228,7 +228,7 @@ struct QuickActionsView: View {
                                             }
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                         }
-                                        .glassButtonStyle(variant: .v8)
+                                        .glassButtonStyle(variant: .regular)
                                         .disabled(isProcessing)
                                         
                                         Button {
@@ -258,7 +258,7 @@ struct QuickActionsView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .disabled(isProcessing)
                         .padding(.top, 10) // Add some space above
                         .padding(.bottom, 12) // Add padding below the button
@@ -323,14 +323,14 @@ struct QuickActionsView: View {
                         } label: {
                             Label("Clear", systemImage: "trash") // Using Label for icon + text
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .help("Clear all current clipboard content")
                         // --- END ADDED CLEAR CLIPBOARD BUTTON ---
                         
                         Button("Close") {
                             onComplete()
                         }
-                        .glassButtonStyle(variant: .v8)
+                        .glassButtonStyle(variant: .regular)
                         .keyboardShortcut(.cancelAction)
                         .foregroundColor(.white.opacity(0.9)) // Ensure text is visible
                     }

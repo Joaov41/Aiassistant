@@ -56,12 +56,12 @@ struct WindowBackground: ViewModifier {
 
 struct GlassmorphicBackground: View {
     @Environment(\.colorScheme) var colorScheme
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     @State private var cornerRadius: CGFloat = 12
     
     var body: some View {
         LiquidGlassBackground(
-            variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11, 
+            variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular, 
             cornerRadius: cornerRadius
         ) {
             Color.clear
