@@ -3,9 +3,8 @@ import ApplicationServices
 
 struct TextReplacementTarget {
     let application: NSRunningApplication
-    fileprivate let window: AXUIElement
-    fileprivate let element: AXUIElement
-    fileprivate let fingerprint: TextSelectionFingerprint
+    fileprivate let element: AXUIElement?
+    fileprivate let fingerprint: TextSelectionFingerprint?
 }
 
 struct TextSelectionFingerprint: Equatable {
@@ -105,18 +104,13 @@ enum AccessibilityHelper {
         guard checkAccessibilityPermissions() else { throw TextReplacementError.permissionDenied }
         guard !targetApplication.isTerminated else { throw TextReplacementError.targetUnavailable }
         let appElement = AXUIElementCreateApplication(targetApplication.processIdentifier)
-        guard let window = elementAttribute(appElement, kAXFocusedWindowAttribute),
-              let element = elementAttribute(appElement, kAXFocusedUIElementAttribute) else {
-            throw TextReplacementError.selectionUnavailable
-        }
-        let fingerprint = selectionFingerprint(for: element)
-        guard fingerprint.selectedText == expectedText else { throw TextReplacementError.selectionUnavailable }
-        return TextReplacementTarget(
-            application: targetApplication,
-            window: window,
-            element: element,
-            fingerprint: fingerprint
-        )
+        let element = elementAttribute(appElement, kAXFocusedUIElementAttribute)
+        // Web-rendered editors (e.g. Outlook) often report a selection that does not
+        // match the copied text, or no focused element at all. Only pin a fingerprint
+        // when AX gives us one that provably matches; otherwise rely on the paste path.
+        let fingerprint = element.map(selectionFingerprint(for:))
+        let verified = fingerprint?.selectedText == expectedText ? fingerprint : nil
+        return TextReplacementTarget(application: targetApplication, element: element, fingerprint: verified)
     }
 
     static func replaceTextInCapturedTarget(
@@ -129,38 +123,53 @@ enum AccessibilityHelper {
 
         if !app.isActive {
             app.activate(options: .activateIgnoringOtherApps)
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: .milliseconds(300))
         }
         try Task.checkCancellation()
 
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        guard let currentWindow = elementAttribute(appElement, kAXFocusedWindowAttribute),
-              CFEqual(currentWindow, target.window),
-              let currentElement = elementAttribute(appElement, kAXFocusedUIElementAttribute),
-              CFEqual(currentElement, target.element) else {
-            throw TextReplacementError.selectionChanged
+        // If we captured a verifiable selection, make sure the user hasn't moved it
+        // (or focused a different field) before overwriting anything.
+        if let targetElement = target.element, let fingerprint = target.fingerprint {
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            guard let currentElement = elementAttribute(appElement, kAXFocusedUIElementAttribute),
+                  CFEqual(currentElement, targetElement),
+                  selectionFingerprint(for: currentElement).selectedText == fingerprint.selectedText else {
+                throw TextReplacementError.selectionChanged
+            }
         }
-        let currentFingerprint = selectionFingerprint(for: currentElement)
-        guard currentFingerprint == target.fingerprint else {
-            throw TextReplacementError.selectionChanged
+        try await pasteOverSelection(newText, in: app)
+    }
+
+    /// Replace the live selection by placing `text` on the clipboard and simulating ⌘V
+    /// through the HID event tap, exactly like the copy step does. This works uniformly
+    /// across native and web-based editors, where AXSelectedText writes are unreliable.
+    private static func pasteOverSelection(_ text: String, in app: NSRunningApplication) async throws {
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true),
+              let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false),
+              let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false) else {
+            throw TextReplacementError.replacementFailed("Could not synthesize paste keystroke.")
+        }
+        let pasteboard = NSPasteboard.general
+        let originalItems = snapshotPasteboardItems(from: pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        guard pasteboard.string(forType: .string) == text else {
+            restorePasteboardItems(originalItems, to: pasteboard)
+            throw TextReplacementError.replacementFailed("Could not place the result on the clipboard.")
         }
 
-        var isSettable = DarwinBoolean(false)
-        let settableStatus = AXUIElementIsAttributeSettable(
-            currentElement,
-            kAXSelectedTextAttribute as CFString,
-            &isSettable
-        )
-        guard settableStatus == .success, isSettable.boolValue else {
-            throw TextReplacementError.replacementUnsupported
+        let keyDelay: Duration = isSpreadsheetApplication(app) ? .milliseconds(300) : .milliseconds(200)
+        for event in [cmdDown, vDown, vUp, cmdUp] {
+            event.flags = .maskCommand
+            event.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: keyDelay)
         }
-        let status = AXUIElementSetAttributeValue(
-            currentElement,
-            kAXSelectedTextAttribute as CFString,
-            newText as CFString
-        )
-        guard status == .success else {
-            throw TextReplacementError.replacementFailed("Accessibility error \(status.rawValue).")
+
+        try? await Task.sleep(for: isSpreadsheetApplication(app) ? .milliseconds(500) : .milliseconds(300))
+        if pasteboard.string(forType: .string) == text {
+            restorePasteboardItems(originalItems, to: pasteboard)
         }
     }
 
