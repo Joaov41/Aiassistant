@@ -13,7 +13,7 @@ struct SettingsView: View {
     @ObservedObject var appState: AppState
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariant: Int = 11
+    @AppStorage("glass_variant") private var glassVariant: Int = 0
     @State private var cloudAvailabilityDescription = "Checking Apple Cloud availability..."
     @State private var isCheckingCloudAvailability = false
     @State private var cloudAvailabilityTask: Task<Void, Never>?
@@ -36,12 +36,14 @@ struct SettingsView: View {
             Group {
                 if themeStyle == "glass" {
                     LiquidGlassBackground(
-                        variant: GlassVariant(rawValue: glassVariant) ?? .v11,
+                        variant: GlassVariant(rawValue: glassVariant) ?? .regular,
                         cornerRadius: 0
                     ) {
                         Color.clear
                     }
                     .ignoresSafeArea()
+                } else if themeStyle == "gradient" {
+                    GradientThemeBackground().ignoresSafeArea()
                 } else {
                     ZStack {
                         // Add a blur layer first
@@ -128,18 +130,19 @@ struct SettingsView: View {
                                 Text("Style:")
                                     .fontWeight(.medium)
                                     .foregroundColor(.white.opacity(0.8))
-                                Slider(value: Binding(
-                                    get: { Double(glassVariant) },
-                                    set: { glassVariant = Int($0) }
-                                ), in: 0...19, step: 1)
-                                Text("\(glassVariant)")
-                                    .frame(width: 30)
-                                    .monospacedDigit()
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white.opacity(0.8))
+                                Picker("Style:", selection: Binding(
+                                    get: { GlassVariant(rawValue: glassVariant) ?? .regular },
+                                    set: { glassVariant = $0.rawValue }
+                                )) {
+                                    ForEach(GlassVariant.allCases) { variant in
+                                        Text(variant.displayName).tag(variant)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
                             }
-                            
-                            Text("Experiment with different glass variants (0-19)")
+
+                            Text("Choose how the Liquid Glass material renders")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.6))
                                 .fontWeight(.medium)
@@ -269,6 +272,9 @@ struct SettingsView: View {
                                 .foregroundColor(.white.opacity(0.75))
                             SecureField("Required by some servers", text: $settings.localOpenAIAPIKey)
                                 .textFieldStyle(.roundedBorder)
+                            if let error = settings.localOpenAICredentialError {
+                                Text(error).font(.caption).foregroundStyle(.red)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -299,6 +305,19 @@ struct SettingsView: View {
                             .toggleStyle(.switch)
                             .help("Sends enable_thinking=false to servers that support chat template arguments.")
 
+                        HStack {
+                            Text("Max Output Tokens")
+                            Spacer()
+                            TextField("1024", value: $settings.localOpenAIMaxTokens, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 100)
+                                .onSubmit {
+                                    settings.localOpenAIMaxTokens = AppSettings.validOutputTokenLimit(settings.localOpenAIMaxTokens)
+                                }
+                            Stepper("Max Output Tokens", value: $settings.localOpenAIMaxTokens, in: 1...131_072, step: 256)
+                                .labelsHidden()
+                        }
+
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(localOpenAIConnectionColor)
@@ -311,7 +330,7 @@ struct SettingsView: View {
                             Button(isTestingLocalOpenAIConnection ? "Testing..." : "Test & Load Models") {
                                 testLocalOpenAIConnection()
                             }
-                            .glassButtonStyle(variant: .v8)
+                            .glassButtonStyle(variant: .regular)
                             .disabled(isTestingLocalOpenAIConnection)
                         }
                     }
@@ -345,7 +364,7 @@ struct SettingsView: View {
                     Button(isCheckingCloudAvailability ? "Checking..." : "Check Cloud") {
                         checkCloudAvailability()
                     }
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                     .disabled(isCheckingCloudAvailability)
                 }
 
@@ -365,7 +384,7 @@ struct SettingsView: View {
                     Button("Open Apple Intelligence Settings") {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")!)
                     }
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                 }
             }
 
@@ -376,7 +395,7 @@ struct SettingsView: View {
                  Button(showOnlyApiSetup ? "Complete Setup" : "Save & Close") {
                      saveSettings()
                  }
-                 .glassButtonStyle(variant: .v8)
+                 .glassButtonStyle(variant: .regular)
                  .scaleEffect(1.1)
             }
 

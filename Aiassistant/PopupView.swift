@@ -6,10 +6,10 @@ import UniformTypeIdentifiers
 struct PopupView: View {
     @ObservedObject var appState: AppState
     @AppStorage("theme_style") private var themeStyle: String = "standard"
-    @AppStorage("glass_variant") private var glassVariantRaw: Int = 11
+    @AppStorage("glass_variant") private var glassVariantRaw: Int = 0
     
     // Local chat state for the conversation with unique IDs and image support
-    @State private var chatMessages: [(id: UUID, message: String, images: [Data])] = []
+    @StateObject private var conversation = ConversationController()
     @State private var userInput: String = ""
     @State private var selectedReplyMessageID: UUID?
     @State private var selectedReplyText: String = ""
@@ -22,7 +22,9 @@ struct PopupView: View {
     @State private var showQuickActions = false
     
     // Track whether we are calling the AI
-    @State private var isProcessing = false
+    private var isProcessing: Bool {
+        conversation.isProcessing || appState.isProcessing || appState.isAttachmentLoading
+    }
     
     // Store the application that was active when our popup appeared
     @State private var targetApplication: NSRunningApplication?
@@ -72,7 +74,7 @@ struct PopupView: View {
         Group {
             if themeStyle == "glass" {
                 LiquidGlassBackground(
-                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11, 
+                    variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular, 
                     cornerRadius: 12
                 ) {
                     Color.clear
@@ -91,7 +93,7 @@ struct PopupView: View {
     private var chatMessagesScrollView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(chatMessages, id: \.id) { item in
+                ForEach(conversation.messages, id: \.id) { item in
                     let msg = item.message
                     if msg.hasPrefix("User: ") {
                         Text(msg)
@@ -120,7 +122,7 @@ struct PopupView: View {
 		                                        selectedReplyText = ""
 		                                    }
 		                                    .font(.caption)
-		                                    .glassButtonStyle(variant: .v12)
+		                                    .glassButtonStyle(variant: .regular)
 		                                    .padding(.top, 4)
 		                                    .padding(.trailing, 4)
 		                                    .help("Use the selected reply text as context for your next question")
@@ -155,7 +157,7 @@ struct PopupView: View {
                                                         .background(Color.black.opacity(0.7))
                                                         .clipShape(Circle())
                                                 }
-                                                .glassButtonStyle(variant: .v10, cornerRadius: 15)
+                                                .glassButtonStyle(variant: .regular, cornerRadius: 15)
                                                 .padding(8)
                                                 .scaleEffect(1.2)
                                             }
@@ -178,9 +180,9 @@ struct PopupView: View {
                                             saveImage(imageData)
                                         }
                                         .font(.caption)
-                                        .glassButtonStyle(variant: .v12)
+                                        .glassButtonStyle(variant: .regular)
                                         
-                                        if item.id == chatMessages.last?.id && item.images.contains(where: { $0 == lastGeneratedImage }) {
+                                        if item.id == conversation.messages.last?.id && item.images.contains(where: { $0 == lastGeneratedImage }) {
                                             Text("Tip: You can request changes to this image")
                                                 .font(.caption2)
                                                 .fontWeight(.semibold)
@@ -193,7 +195,7 @@ struct PopupView: View {
                                                 NSApp.keyWindow?.makeFirstResponder(nil)
                                             }
                                             .font(.caption)
-                                            .glassButtonStyle(variant: .v14)
+                                            .glassButtonStyle(variant: .regular)
                                             .padding(.top, 4)
                                             .help("The AI will describe changes to this image based on your request")
                                         }
@@ -228,14 +230,14 @@ struct PopupView: View {
                     Label("Chat", systemImage: "bubble.left.and.bubble.right")
                         .frame(maxWidth: .infinity)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .opacity(appState.selectedMode == .chat ? 1.0 : 0.6)
                 
                 Button(action: { appState.selectedMode = .rewrite }) {
                     Label("Rewrite", systemImage: "pencil.line")
                         .frame(maxWidth: .infinity)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .opacity(appState.selectedMode == .rewrite ? 1.0 : 0.6)
             }
             .padding(.horizontal)
@@ -256,7 +258,7 @@ struct PopupView: View {
                         }
                     }
                     .padding(.top, 6)
-                    .glassButtonStyle(variant: .v8)
+                    .glassButtonStyle(variant: .regular)
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -286,7 +288,7 @@ struct PopupView: View {
                     Text(appState.selectedMode == .rewrite ? "Rewrite" : "Send")
                         .fontWeight(.medium)
                 }
-                .glassButtonStyle(variant: .v8)
+                .glassButtonStyle(variant: .regular)
                 .disabled(isProcessing || userInput.isEmpty)
             }
             .padding()
@@ -296,7 +298,7 @@ struct PopupView: View {
             Button(action: startNewChat) {
                 Label("New Chat", systemImage: "plus.message")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .padding(.leading, 12)
             
             Spacer()
@@ -307,7 +309,7 @@ struct PopupView: View {
             }) {
                 Label("Capture Window", systemImage: "rectangle.on.rectangle")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .help("Capture a screenshot from another application window")
             
             Spacer()
@@ -315,7 +317,7 @@ struct PopupView: View {
             Button(action: copyChatToClipboard) {
                 Label("Copy", systemImage: "doc.on.doc")
             }
-            .glassButtonStyle(variant: .v8)
+            .glassButtonStyle(variant: .regular)
             .padding(.trailing, 12)
         }
             .padding(.bottom, 8)
@@ -476,12 +478,14 @@ struct PopupView: View {
                 Group {
                     if themeStyle == "glass" {
                         LiquidGlassBackground(
-                            variant: GlassVariant(rawValue: glassVariantRaw) ?? .v11,
+                            variant: GlassVariant(rawValue: glassVariantRaw) ?? .regular,
                             cornerRadius: 0
                         ) {
                             Color.clear
                         }
                         .ignoresSafeArea()
+                    } else if themeStyle == "gradient" {
+                        GradientThemeBackground().ignoresSafeArea()
                     } else {
                         ZStack {
                             Color(.windowBackgroundColor)
@@ -506,6 +510,9 @@ struct PopupView: View {
             .preferredColorScheme(.dark)
             .onAppear {
                 setupApplicationTracking()
+            }
+            .onDisappear {
+                conversation.cancel()
             }
             .sheet(isPresented: $showQuickActions) {
                 QuickActionsView(
@@ -594,10 +601,10 @@ struct PopupView: View {
                         return
                     }
                     if url.isFileURL {
-                        state.handleDroppedFile(url: url, displayName: suggestedName)
+                        Task { @MainActor in state.handleDroppedFile(url: url, displayName: suggestedName) }
                         showDropFeedback("Loaded \(suggestedName ?? url.lastPathComponent)")
                     } else {
-                        state.handleDroppedURL(url)
+                        Task { @MainActor in state.handleDroppedURL(url) }
                         showDropFeedback("Loaded \(url.absoluteString)")
                     }
                 }
@@ -610,10 +617,10 @@ struct PopupView: View {
                         return
                     }
                     if url.isFileURL {
-                        state.handleDroppedFile(url: url, displayName: suggestedName)
+                        Task { @MainActor in state.handleDroppedFile(url: url, displayName: suggestedName) }
                         showDropFeedback("Loaded \(suggestedName ?? url.lastPathComponent)")
                     } else {
-                        state.handleDroppedURL(url)
+                        Task { @MainActor in state.handleDroppedURL(url) }
                         showDropFeedback("Loaded \(url.absoluteString)")
                     }
                 }
@@ -625,7 +632,7 @@ struct PopupView: View {
                         attemptFileRepresentationLoad(provider: provider, suggestedName: suggestedName, fallbackTypeIdentifier: UTType.pdf.identifier)
                         return
                     }
-                    state.handleDroppedPDFData(data, fileName: suggestedName)
+                    Task { @MainActor in state.handleDroppedPDFData(data, fileName: suggestedName) }
                     showDropFeedback("Loaded \(suggestedName ?? "PDF")")
                 }
                 handled = true
@@ -636,7 +643,7 @@ struct PopupView: View {
                         attemptFileRepresentationLoad(provider: provider, suggestedName: suggestedName, fallbackTypeIdentifier: UTType.image.identifier)
                         return
                     }
-                    state.handleDroppedImageData(data, fileName: suggestedName)
+                    Task { @MainActor in state.handleDroppedImageData(data, fileName: suggestedName) }
                     showDropFeedback("Loaded \(suggestedName ?? "Image")")
                 }
                 handled = true
@@ -649,7 +656,7 @@ struct PopupView: View {
                         attemptFileRepresentationLoad(provider: provider, suggestedName: provider.suggestedName, fallbackTypeIdentifier: identifier)
                         return
                     }
-                    state.handleDroppedText(text, sourceName: provider.suggestedName)
+                    Task { @MainActor in state.handleDroppedText(text, sourceName: provider.suggestedName) }
                     showDropFeedback("Loaded \(provider.suggestedName ?? "Text")")
                 }
                 handled = true
@@ -672,9 +679,9 @@ struct PopupView: View {
             if let url {
                 let displayName = suggestedName ?? url.lastPathComponent
                 if url.isFileURL {
-                    appState.handleDroppedFile(url: url, displayName: displayName)
+                    Task { @MainActor in appState.handleDroppedFile(url: url, displayName: displayName) }
                 } else {
-                    appState.handleDroppedURL(url)
+                    Task { @MainActor in appState.handleDroppedURL(url) }
                 }
                 showDropFeedback("Loaded \(displayName)")
                 return
@@ -692,7 +699,9 @@ struct PopupView: View {
                         try FileManager.default.removeItem(at: destinationURL)
                     }
                     try FileManager.default.copyItem(at: tempURL, to: destinationURL)
-                    appState.handleDroppedFile(url: destinationURL, displayName: displayName)
+                    Task { @MainActor in
+                        appState.handleDroppedFile(url: destinationURL, displayName: displayName, deleteAfterImport: true)
+                    }
                     showDropFeedback("Loaded \(displayName)")
                 } catch {
                     print("Failed to copy dropped temp file: \(error)")
@@ -720,7 +729,7 @@ struct PopupView: View {
 
     private func setAttachmentMessage(for type: ClipboardContentType) {
         if let existingID = attachmentMessageID {
-            chatMessages.removeAll { $0.id == existingID }
+            conversation.messages.removeAll { $0.id == existingID }
             attachmentMessageID = nil
         }
         
@@ -752,7 +761,7 @@ struct PopupView: View {
         guard shouldDisplay else { return }
         
         let newID = UUID()
-        chatMessages.insert((id: newID, message: message, images: []), at: 0)
+        conversation.messages.insert(ChatMessage(id: newID, message: message), at: 0)
         attachmentMessageID = newID
     }
     
@@ -867,444 +876,81 @@ struct PopupView: View {
         setAttachmentMessage(for: appState.lastClipboardType)
     }
     
-    /// Regular chat: combines any extracted text with the user's typed message.
+    /// Regular chat: captures provider and attachment state at send time.
     private func sendChatMessage() {
-        guard !userInput.isEmpty else { return }
-        
-        // --- Make function async --- 
-        Task { 
-            // --- Move existing logic inside Task --- 
-            let typedPrompt = userInput
-            userInput = ""
-            chatMessages.append((id: UUID(), message: "User: \(typedPrompt)", images: []))
-            
-            let retainedContext = appState.retainedTextContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            var textContext = retainedContext.isEmpty ? appState.selectedText : appState.retainedTextContext
-            let hasRetainedDocumentContext = !retainedContext.isEmpty
-            
-            if !hasRetainedDocumentContext,
-               let targetApp = targetApplication ?? appState.previousApplication,
-               targetApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-                let ourApp = NSRunningApplication.current
-                print("DEBUG: Attempting to refresh chat context from \(targetApp.localizedName ?? "Unknown").")
-                
+        let prompt = userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, !isProcessing else { return }
+
+        let provider = appState.activeProvider
+        let attachment = appState.conversationContext
+        let attachmentRevision = appState.attachmentRevision
+        let targetApp = targetApplication ?? appState.previousApplication
+        let isImageEditRequest = detectImageEditRequest(prompt)
+        let imageEditSource = isImageEditRequest ? lastGeneratedImage : nil
+        userInput = ""
+
+        conversation.send(prompt, provider: provider, prepareRequest: {
+            var context = attachment
+            var effectivePrompt = prompt
+            var systemPrompt: String?
+
+            if !context.isDocument,
+               context.images.isEmpty,
+               let targetApp,
+               targetApp.bundleIdentifier != Bundle.main.bundleIdentifier,
+               !targetApp.isTerminated {
                 targetApp.activate(options: .activateIgnoringOtherApps)
-                try? await Task.sleep(nanoseconds: 350_000_000)
-                
-                if let refreshedText = AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
-                   !refreshedText.isEmpty {
-                    await MainActor.run {
-                        appState.selectedText = refreshedText
-                        appState.lastClipboardType = .text
-                        appState.previousApplication = targetApp
-                        self.targetApplication = targetApp
+                try await Task.sleep(for: .milliseconds(350))
+                try Task.checkCancellation()
+                if let refreshed = await AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
+                   !refreshed.isEmpty {
+                    context.text = refreshed
+                    if self.appState.attachmentRevision == attachmentRevision {
+                        self.appState.setExternalSelection(refreshed, from: targetApp)
                     }
-                    textContext = refreshedText
-                    print("DEBUG: Successfully refreshed chat context from target application.")
-                } else {
-                    await MainActor.run {
-                        appState.previousApplication = targetApp
-                        self.targetApplication = targetApp
-                    }
-                    print("DEBUG: Failed to refresh chat context from target application; falling back to cached selection.")
                 }
-                
-                await MainActor.run {
-                    ourApp.activate(options: .activateIgnoringOtherApps)
-                }
-            } else if textContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                print("DEBUG: No target application available and cached chat context is empty.")
+                NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
             }
-            
-            // --- REVISED IMAGE HANDLING --- 
-            // Determine images to send based on context
-            var imagesToIncludeForProcessing: [Data] = []
-            var clearSelectedImagesAfterSend = false
 
-            if let conversationImage = appState.capturedImageForConversation {
-                // 1. Prioritize conversation context image (from window capture)
-                imagesToIncludeForProcessing = [conversationImage]
-                print("Using conversation image context (window capture).")
-                // Don't clear selectedImages if we are using conversation context
-                clearSelectedImagesAfterSend = false 
-            } else if !appState.selectedImages.isEmpty {
-                // 2. Use clipboard/selection image if no conversation image exists
-                imagesToIncludeForProcessing = appState.selectedImages
-                // Mark for clearing *after* this send, as it's temporary context
-                clearSelectedImagesAfterSend = true 
-                print("Using temporary clipboard/selection image context.")
-                // --- ADDED: Promote clipboard image to conversation context --- 
-                if let clipboardImage = appState.selectedImages.first {
-                    print("Promoting clipboard image to conversation context.")
-                    appState.capturedImageForConversation = clipboardImage
-                }
-                // --- END ADDED ---
-            } else {
-                // 3. No image context
-                print("No image context for this message.")
-                clearSelectedImagesAfterSend = false
-            }
-            
-            // Detect if this is an image editing request using the *last generated* image
-            let isImageEditRequest = detectImageEditRequest(typedPrompt)
-            // If this is an edit request, ensure the last generated image is included.
-            if isImageEditRequest, let lastImage = lastGeneratedImage, !imagesToIncludeForProcessing.contains(lastImage) {
-                print("Image edit request detected - including last generated image")
-                imagesToIncludeForProcessing.append(lastImage) 
-            }
-            // --- END REVISED IMAGE HANDLING ---
-            
-            // Text context already contains the freshest captured selection (if available)
-            isProcessing = true
-            
-            let trimmedTextContext = textContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Create system prompt for image editing
-            let systemPrompt: String?
-            let finalPrompt: String
-            
-            if isImageEditRequest && lastGeneratedImage != nil {
+            if let imageEditSource {
+                context.images.append(imageEditSource)
                 systemPrompt = """
-                You are an AI that can generate new images based on reference images. The user has attached an image and wants you to create a new version with specific changes.
-                When you receive an image along with a request for modifications:
-                1. Examine the attached image carefully
-                2. Create a NEW image that incorporates the requested changes 
-                3. Return the newly generated image
-                
-                Your strength is in generating images based on examples and descriptions.
+                Analyze the attached reference image and return the requested result.
+                If this provider cannot create images, explain that limitation directly without fabricating an image.
                 """
-                
-                finalPrompt = """
-                I've attached an image and I'd like you to create a new version with these changes: \(typedPrompt)
-                
-                Please use the attached image as a reference and create a new image that incorporates these modifications.
-                The new image should maintain the overall essence of the original but with the requested changes applied.
-                """
-            } else {
-                if trimmedTextContext.isEmpty {
-                    systemPrompt = nil
-                    finalPrompt = typedPrompt
-                } else if hasRetainedDocumentContext {
-                    systemPrompt = """
-                    You are a precise document extraction assistant. Use only the provided Context.
-                    If an amount, currency, date, or field is not explicitly present in the Context, say it is not found.
-                    Do not infer subtotals, taxes, totals, conversions, or missing values unless the user explicitly asks you to calculate from listed amounts.
-                    When answering extraction questions, quote the exact label and amount from the Context.
-                    """
-                    finalPrompt = """
-                    Context:
-                    ---
-                    \(trimmedTextContext)
-                    ---
-
-                    User says: \(typedPrompt)
-                    """
-                } else {
-                    systemPrompt = nil
-                    finalPrompt = """
-                    Use this context if it is relevant to the user's message. If it is not relevant, answer normally.
-
-                    Context:
-                    ---
-                    \(trimmedTextContext)
-                    ---
-
-                    User says: \(typedPrompt)
-                    """
-                }
+                effectivePrompt = "Using the attached reference image, " + prompt
             }
-            
-            // isProcessing = true // Moved up for URL fetch
-            // Task { // Removed outer Task, already inside one
-                do {
-                    let aiResponse: AIResponse
-                    var gemmaStreamingMessageID: UUID?
-                    if AppSettings.shared.selectedAIProvider == .coreAIGemma {
-                        let gemmaPrompt = localServerChatPrompt(
-                            currentPrompt: finalPrompt,
-                            latestUserMessage: typedPrompt,
-                            includePriorTranscript: !hasRetainedDocumentContext
-                        )
-                        let streamingID = UUID()
-                        gemmaStreamingMessageID = streamingID
-                        let waitingMessage = appState.coreAIGemmaProvider.isSelectedModelLoaded
-                            ? "MLX thinking..."
-                            : "Connecting to MLX..."
-                        chatMessages.append((id: streamingID, message: "Assistant: \(waitingMessage)", images: []))
-                        aiResponse = try await appState.coreAIGemmaProvider.processText(
-                            systemPrompt: systemPrompt,
-                            userPrompt: gemmaPrompt,
-                            images: imagesToIncludeForProcessing,
-                            videos: appState.selectedVideos,
-                            onUpdate: { partialText in
-                                guard let index = chatMessages.firstIndex(where: { $0.id == streamingID }) else {
-                                    return
-                                }
-                                let visibleText = partialText.isEmpty ? "MLX thinking..." : partialText
-                                chatMessages[index].message = "Assistant: \(visibleText)"
-                            }
-                        )
-                    } else if AppSettings.shared.selectedAIProvider == .localOpenAI {
-                        let localOpenAIPrompt = localServerChatPrompt(
-                            currentPrompt: finalPrompt,
-                            latestUserMessage: typedPrompt,
-                            includePriorTranscript: !hasRetainedDocumentContext
-                        )
-                        aiResponse = try await appState.localOpenAIProvider.processText(
-                            systemPrompt: systemPrompt,
-                            userPrompt: localOpenAIPrompt,
-                            images: imagesToIncludeForProcessing,
-                            videos: appState.selectedVideos
-                        )
-                    } else {
-                        aiResponse = try await appState.processWithActiveProvider(
-                            systemPrompt: systemPrompt,
-                            userPrompt: finalPrompt,
-                            images: imagesToIncludeForProcessing,
-                            videos: appState.selectedVideos
-                        )
-                    }
-                    
-                    if !aiResponse.images.isEmpty {
-                        // Store the most recent generated image for potential future edits
-                        if let latestImage = aiResponse.images.last {
-                            lastGeneratedImage = latestImage
-                        }
-                        
-                        // If there are images in the response, create a response window
-                        DispatchQueue.main.async {
-                            // Add debug print
-                            print("Creating response window with \(aiResponse.images.count) images")
-                            
-                            // Create the response view first
-                            let responseView = ResponseView(
-                                content: aiResponse.text,
-                                selectedText: appState.selectedText,
-                                option: WritingOption.general,
-                                images: aiResponse.images,
-                                providerName: aiResponse.providerName
-                            )
-                            
-                            // Create the window using the view
-                            let window = ResponseWindow(
-                                with: responseView,
-                                title: "AI Response with Images",
-                                hasImages: !aiResponse.images.isEmpty
-                            )
-                            
-                            WindowManager.shared.addResponseWindow(window)
-                            
-                            // Add a message to the chat including the image data
-                            self.chatMessages.append((
-                                id: UUID(), 
-                                message: "Assistant: \(aiResponse.text)",
-                                images: aiResponse.images
-                            ))
-                        }
-                    } else if isImageEditRequest && lastGeneratedImage != nil {
-                        // Handle the case where an image edit was requested but no image was returned
-                        DispatchQueue.main.async {
-                            print("Image edit request acknowledged but no modified image was returned")
-                            
-                            // Provide feedback to user about the limitation
-                            let limitationMessage = """
-                            I attempted to create a modified version of the image based on your request, but wasn't able to generate a new image.
-                            
-                            Please try asking for the modification in a different way, such as:
-                            
-                            "Create a version of this image with a blue background"
-                            "Transform this image to have a more cartoon-like style"
-                            "Make a similar image but with mountains in the background"
-                            
-                            This often works better with more specific, descriptive instructions.
-                            """
-                            
-                            chatMessages.append((id: UUID(), message: "Assistant: \(limitationMessage)", images: []))
-                        }
-                    } else {
-                        // Regular text response
-                        if let gemmaStreamingMessageID,
-                           let index = chatMessages.firstIndex(where: { $0.id == gemmaStreamingMessageID }) {
-                            chatMessages[index].message = "Assistant: \(aiResponse.text)"
-                        } else {
-                            chatMessages.append((id: UUID(), message: "Assistant: \(aiResponse.text)", images: []))
-                        }
-                    }
-                } catch {
-                    chatMessages.append((id: UUID(), message: "Error: \(error.localizedDescription)", images: []))
-                }
-                isProcessing = false
 
-                // --- ADDED: Clear temporary images only if they were used --- 
-                if clearSelectedImagesAfterSend {
-                    DispatchQueue.main.async {
-                         print("Clearing temporary selectedImages after send.")
-                         appState.selectedImages = []
-                    }
-                }
-                // --- END ADDED ---
-            //} // Removed outer Task bracket
-        } // End of Task wrapper
+            return context.request(for: effectivePrompt, systemPrompt: systemPrompt)
+        }, onResponse: { response in
+            guard !response.images.isEmpty else { return }
+            self.lastGeneratedImage = response.images.last
+            self.showImageResponse(response)
+        })
     }
 
-    private func localServerChatPrompt(
-        currentPrompt: String,
-        latestUserMessage: String,
-        includePriorTranscript: Bool
-    ) -> String {
-        guard includePriorTranscript else {
-            return currentPrompt
-        }
-
-        let priorTranscript = priorChatTranscriptForMLX(latestUserMessage: latestUserMessage)
-        guard !priorTranscript.isEmpty else {
-            return currentPrompt
-        }
-
-        return """
-        Use the recent chat transcript for context, then answer the latest user message.
-
-        Recent chat:
-        \(priorTranscript)
-
-        Latest:
-        \(currentPrompt)
-        """
+    private func showImageResponse(_ response: AIResponse) {
+        let responseView = ResponseView(
+            content: response.displayText,
+            selectedText: appState.selectedText,
+            option: .general,
+            images: response.images,
+            providerName: response.providerName
+        )
+        let window = ResponseWindow(
+            with: responseView,
+            title: "AI Response with Images",
+            hasImages: true
+        )
+        WindowManager.shared.addResponseWindow(window)
     }
 
-    private func compactCurrentPromptForGemma(_ currentPrompt: String, latestUserMessage: String) -> String {
-        guard let context = documentContext(in: currentPrompt) else {
-            return compactForGemmaPreservingEnd(currentPrompt, limit: 420)
-        }
-
-        let excerpt = relevantGemmaExcerpt(from: context, question: latestUserMessage, limit: 560)
-        return """
-        Question: \(compactForGemma(latestUserMessage, limit: 140))
-        Use only this PDF excerpt. Answer directly in under 90 words.
-        PDF excerpt:
-        \(excerpt)
-        """
+    private func isSpreadsheetApplication(_ application: NSRunningApplication) -> Bool {
+        let identifier = application.bundleIdentifier?.lowercased() ?? ""
+        let name = application.localizedName?.lowercased() ?? ""
+        return identifier.contains("excel") || identifier.contains("numbers") || identifier.contains("sheets")
+            || name.contains("excel") || name.contains("numbers") || name.contains("sheets")
     }
-
-    private func documentContext(in prompt: String) -> String? {
-        guard let contextMarker = prompt.range(of: "Context:\n---"),
-              let userMarker = prompt.range(of: "\n---\n\nUser says:", range: contextMarker.upperBound..<prompt.endIndex) else {
-            return nil
-        }
-        return String(prompt[contextMarker.upperBound..<userMarker.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func relevantGemmaExcerpt(from context: String, question: String, limit: Int) -> String {
-        let terms = gemmaSearchTerms(for: question)
-        let chunks = context
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .components(separatedBy: CharacterSet(charactersIn: "\n.;"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.count > 20 }
-
-        let scored = chunks.enumerated().map { index, chunk in
-            let lower = chunk.lowercased()
-            let score = terms.reduce(0) { partial, term in
-                partial + (lower.contains(term) ? 1 : 0)
-            }
-            return (index: index, chunk: chunk, score: score)
-        }
-
-        let selected = scored
-            .filter { $0.score > 0 }
-            .sorted { lhs, rhs in
-                lhs.score == rhs.score ? lhs.index < rhs.index : lhs.score > rhs.score
-            }
-            .prefix(5)
-            .sorted { $0.index < $1.index }
-            .map(\.chunk)
-
-        let excerpt = selected.isEmpty ? chunks.prefix(4).joined(separator: "\n") : selected.joined(separator: "\n")
-        return compactForGemmaPreservingEnd(excerpt, limit: limit)
-    }
-
-    private func gemmaSearchTerms(for question: String) -> [String] {
-        let stopwords: Set<String> = [
-            "what", "when", "where", "which", "there", "their", "about", "does", "with",
-            "from", "that", "this", "have", "were", "will", "would", "could", "should"
-        ]
-        var terms = question
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count > 3 && !stopwords.contains($0) }
-
-        if terms.contains("tendency") || terms.contains("trend") || terms.contains("price") {
-            terms += ["trend", "tendency", "price", "prices", "brent", "wti", "rose", "fell", "increase", "decrease", "march"]
-        }
-        return Array(Set(terms))
-    }
-
-    private func priorChatTranscriptForProvider(latestUserMessage: String) -> String {
-        var messages = chatMessages
-        if let last = messages.last,
-           last.message == "User: \(latestUserMessage)" {
-            messages.removeLast()
-        }
-
-        let transcript = messages.suffix(2).compactMap { item -> String? in
-            if item.message.hasPrefix("User: ") {
-                return "User: \(compactForGemma(String(item.message.dropFirst("User: ".count)), limit: 100))"
-            }
-            if item.message.hasPrefix("Assistant: ") {
-                return "Assistant: \(compactForGemma(String(item.message.dropFirst("Assistant: ".count)), limit: 180))"
-            }
-            return nil
-        }
-        .joined(separator: "\n")
-
-        return compactForGemma(transcript, limit: 320)
-    }
-
-    private func priorChatTranscriptForMLX(latestUserMessage: String) -> String {
-        var messages = chatMessages
-        if let last = messages.last,
-           last.message == "User: \(latestUserMessage)" {
-            messages.removeLast()
-        }
-
-        return messages.suffix(12).compactMap { item -> String? in
-            if item.message.hasPrefix("User: ") {
-                return item.message
-            }
-            if item.message.hasPrefix("Assistant: ") {
-                return item.message
-            }
-            return nil
-        }
-        .joined(separator: "\n\n")
-    }
-
-    private func compactForGemma(_ text: String, limit: Int) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > limit else {
-            return normalized
-        }
-        let prefix = normalized.prefix(limit)
-        return "\(prefix)\n[Earlier/extra context trimmed for Small E2B.]"
-    }
-
-    private func compactForGemmaPreservingEnd(_ text: String, limit: Int) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > limit else {
-            return normalized
-        }
-        let suffix = normalized.suffix(limit)
-        return "[Earlier context trimmed for Small E2B.]\n\(suffix)"
-    }
-    
-    // Detect if a prompt is requesting edits to a previously generated image
     private func detectImageEditRequest(_ prompt: String) -> Bool {
         let lowerPrompt = prompt.lowercased()
         
@@ -1335,7 +981,7 @@ struct PopupView: View {
     
     /// Clears the chat and rechecks the clipboard.
     private func startNewChat() {
-        chatMessages.removeAll()
+        conversation.reset()
         attachmentMessageID = nil
         showAttachmentPreview = false
         userInput = ""
@@ -1349,267 +995,113 @@ struct PopupView: View {
         return name?.isEmpty == false ? name ?? "Attachment" : "Attachment"
     }
     
-    /// The inline rewrite flow
+    /// Rewrites the original selection only while the captured Accessibility target is unchanged.
     private func rewriteInPlace() {
-        guard !userInput.isEmpty else {
-            print("No rewrite instructions typed.")
-            return
-        }
-        isProcessing = true
-        print("DEBUG: rewriteInPlace function started.") // Log start
-        
-        // Get the current frontmost application if available, otherwise use stored target
+        let instructions = userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instructions.isEmpty, !isProcessing else { return }
+
         let currentApp = NSWorkspace.shared.frontmostApplication
-        let targetApp = currentApp?.bundleIdentifier != Bundle.main.bundleIdentifier ? currentApp : targetApplication
-        
-        guard let targetApp = targetApp,
-              !targetApp.isTerminated else {
-            print("DEBUG: rewriteInPlace FAILED - targetApp is nil or terminated.")
-            print("DEBUG: targetApp = \(targetApp?.localizedName ?? "nil"), isTerminated = \(targetApp?.isTerminated ?? true)")
-            print("Please select text in another application first")
-            isProcessing = false
+        guard let targetApp = currentApp?.bundleIdentifier != Bundle.main.bundleIdentifier
+                ? currentApp : targetApplication,
+              !targetApp.isTerminated,
+              targetApp.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            conversation.messages.append(ChatMessage(role: "error", content: "Select text in another app first."))
             return
         }
-        
-        // Make sure it's not our own app
-        if targetApp.bundleIdentifier == Bundle.main.bundleIdentifier {
-            print("DEBUG: rewriteInPlace FAILED - targetApp is our own app.")
-            print("Please select text in another application first")
-            isProcessing = false
-            return
-        }
-        
-        // Update stored target application references
-        self.targetApplication = targetApp
+
+        let provider = appState.activeProvider
+        let isSpreadsheet = isSpreadsheetApplication(targetApp)
+        userInput = ""
+        targetApplication = targetApp
         appState.previousApplication = targetApp
-        
-        // Check if this is a spreadsheet application
-        let isSpreadsheetApp = targetApp.bundleIdentifier?.contains("excel") == true || 
-                               targetApp.bundleIdentifier?.contains("numbers") == true || 
-                               targetApp.bundleIdentifier?.contains("sheets") == true ||
-                               targetApp.localizedName?.lowercased().contains("excel") == true ||
-                               targetApp.localizedName?.lowercased().contains("numbers") == true ||
-                               targetApp.localizedName?.lowercased().contains("sheets") == true
-        
-        print("Target app for text operation: \(targetApp.localizedName ?? "Unknown") (\(targetApp.bundleIdentifier ?? "unknown bundle id"))")
-        print("Is spreadsheet app: \(isSpreadsheetApp)")
-        
-        // Store a reference to our app for later reactivation
-        let ourApp = NSRunningApplication.current
-        
-        Task {
-            // Step 1: Activate target app and copy text
+
+        conversation.perform { id in
             targetApp.activate(options: .activateIgnoringOtherApps)
-            
-            // Wait for activation with consistent timing
-            print("DEBUG: Activating target app: \(targetApp.localizedName ?? "Unknown")")
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
-            
-            print("DEBUG: Attempting to copy text from focused element via AccessibilityHelper...")
-            guard let externalText = AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
+            try? await Task.sleep(for: .milliseconds(300))
+            guard self.conversation.isCurrent(id),
+                  let externalText = await AccessibilityHelper.copyTextFromFocusedElement(targetApplication: targetApp),
                   !externalText.isEmpty else {
-                print("No text available from the external app's selection.")
-                print("DEBUG: rewriteInPlace FAILED - AccessibilityHelper.copyTextFromFocusedElement returned nil or empty.")
-                isProcessing = false
+                guard self.conversation.isCurrent(id) else { return }
+                self.conversation.messages.append(ChatMessage(role: "error", content: "No selected text was found in the target app."))
                 return
             }
-            print("DEBUG: AccessibilityHelper captured text (length: \(externalText.count)) = '\(String(externalText.prefix(100)))...'")
-            
-            print("Successfully captured text of length: \(externalText.count)")
-            print("Captured text preview: \(String(externalText.prefix(50)))...")
-            
-            await MainActor.run {
-                appState.selectedText = externalText
-                appState.lastClipboardType = .text
-            }
-            
-            // Step 2: Build the prompt with special handling for spreadsheets
-            let instructions = userInput
-            print("DEBUG: Instructions for AI: \(instructions)") // Log instructions
-            userInput = "" // Clear input after capturing instructions
-            
-            // Detect if this is an image editing request
-            let isImageEditRequest = detectImageEditRequest(instructions)
-            
-            // --- CHANGED: Only include lastGeneratedImage if it's an explicit edit request ---
-            var imagesToInclude: [Data] = []
-            if isImageEditRequest, let lastImage = lastGeneratedImage {
-                print("Image edit request detected in rewrite mode - including last generated image")
-                imagesToInclude.append(lastImage)
-            }
-            // --- END CHANGED ---
-            
-            // Detect if content appears to be tabular/CSV data
-            let containsTabsOrCommas = externalText.contains("\t") || 
-                                       (externalText.contains(",") && externalText.contains("\n"))
-            let looksLikeTableData = containsTabsOrCommas || isSpreadsheetApp
-            
-            let formatInstructions = looksLikeTableData ? 
-                "Important: Preserve the table structure exactly. Maintain all tabs, commas, and line breaks in their original positions. If this is spreadsheet data, ensure each cell's content is modified while keeping the overall format intact." : ""
-            
-            // Create system prompt and final prompt based on whether this is an image edit
-            let systemPrompt: String?
-            let finalPrompt: String
-            
-            if isImageEditRequest && lastGeneratedImage != nil {
-                systemPrompt = """
-                You are an AI that can generate new images based on reference images. The user has attached an image and wants you to create a new version with specific changes.
-                When you receive an image along with a request for modifications:
-                1. Examine the attached image carefully
-                2. Create a NEW image that incorporates the requested changes 
-                3. Return the newly generated image
-                
-                Your strength is in generating images based on examples and descriptions.
-                """
-                
-                finalPrompt = """
-                I've attached an image and I'd like you to create a new version with these changes: \(instructions)
-                
-                Please use the attached image as a reference and create a new image that incorporates these modifications.
-                The new image should maintain the overall essence of the original but with the requested changes applied.
-                """
-            } else {
-                systemPrompt = nil
-                finalPrompt = """
-                Follow instructions of the user (return only the rewritten text, no disclaimers).
-                
-                \(formatInstructions)
 
-                Instructions: \(instructions)
-
-                Original Text:
-                \(externalText)
-                """
-            }
-            
+            let replacementTarget: TextReplacementTarget
             do {
-                // Step 3: Send the prompt to the LLM
-                let aiResponse = try await appState.processWithActiveProvider(
-                    systemPrompt: systemPrompt,
-                    userPrompt: finalPrompt,
-                    images: imagesToInclude,
-                    videos: appState.selectedVideos
+                replacementTarget = try AccessibilityHelper.captureReplacementTarget(
+                    expectedText: externalText,
+                    targetApplication: targetApp
                 )
-                
-                // --- REVERTED TO OLD LOGIC: Handle images OR text replacement separately ---
-                // Check if there are images in the response
-                if !aiResponse.images.isEmpty {
-                    // Store the most recent generated image for potential future edits
-                    if let latestImage = aiResponse.images.last {
-                        lastGeneratedImage = latestImage
-                    }
-                    
-                    // If there are images, display them in a ResponseWindow
-                    DispatchQueue.main.async {
-                        print("Rewrite: Creating response window with \(aiResponse.images.count) images")
-                        
-                        let responseView = ResponseView(
-                            content: aiResponse.text,
-                            selectedText: externalText,
-                            option: WritingOption.general,
-                            images: aiResponse.images,
-                            providerName: aiResponse.providerName
-                        )
-                        
-                        let window = ResponseWindow(
-                            with: responseView,
-                            title: "AI Generated Image",
-                            hasImages: !aiResponse.images.isEmpty
-                        )
-                        
-                        WindowManager.shared.addResponseWindow(window)
-                        
-                        // Add a message to the chat including the image data
-                        self.chatMessages.append((
-                            id: UUID(),
-                            message: "Assistant: \(aiResponse.text.isEmpty ? "Image successfully generated" : aiResponse.text)",
-                            images: aiResponse.images
-                        ))
-                        
-                        // Reactivate our app to show the image window
-                        print("Activating app to show image window.")
-                        ourApp.activate(options: .activateIgnoringOtherApps)
-                    }
-                } else if isImageEditRequest && lastGeneratedImage != nil {
-                    // Handle the case where an image edit was requested but no image was returned
-                    // (This part matches the old logic too)
-                    DispatchQueue.main.async {
-                        print("Rewrite: Image edit request acknowledged but no modified image was returned")
-                        
-                        let limitationMessage = """
-                        I attempted to create a modified version of the image based on your request, but wasn't able to generate a new image.
-                        
-                        Please try asking for the modification in a different way, such as:
-                        
-                        "Create a version of this image with a blue background"
-                        "Transform this image to have a more cartoon-like style"
-                        "Make a similar image but with mountains in the background"
-                        
-                        This often works better with more specific, descriptive instructions.
-                        """
-                        
-                        self.chatMessages.append((
-                            id: UUID(),
-                            message: "Assistant: \(limitationMessage)",
-                            images: []
-                        ))
-                        
-                        // Reactivate our app to show the message
-                        print("Activating app to show limitation message.")
-                        ourApp.activate(options: .activateIgnoringOtherApps)
-                    }
-                } else {
-                    // --- THIS IS THE PURE TEXT REPLACEMENT PATH --- 
-                    print("DEBUG: Entered text replacement 'else' block.") // Log entry
-                    DispatchQueue.main.async {
-                        // Make sure target app is still available
-                        if targetApp.isTerminated {
-                            print("Target application was closed. Copying result to clipboard instead.")
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(aiResponse.text, forType: .string)
-                        } else {
-                            // Log the text that's about to be pasted
-                            if aiResponse.text.isEmpty {
-                                print("DEBUG: AI response text is EMPTY. Cannot paste.")
-                            } else {
-                                print("DEBUG: AI response text (length: \(aiResponse.text.count)) = '\(aiResponse.text.prefix(100))...'")
-                            }
-                            
-                            // For spreadsheet apps, add a slightly longer delay before pasting
-                            if isSpreadsheetApp {
-                                // Use Thread.sleep like the old version for simplicity here
-                                Thread.sleep(forTimeInterval: 0.2) 
-                            }
-                            print("Attempting to replace text in focused element...")
-                            AccessibilityHelper.replaceTextInFocusedElement(with: aiResponse.text, targetApplication: targetApp)
-                            
-                            // Reactivate our app after operation completes (like old version)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { 
-                                print("Activating app after text replacement attempt.")
-                                ourApp.activate(options: .activateIgnoringOtherApps)
-                            }
-                        }
-                    }
-                    // --- END PURE TEXT REPLACEMENT PATH ---
-                }
-                 // --- END REVERTED LOGIC ---
-
             } catch {
-                print("Error rewriting: \(error.localizedDescription)")
-                // Ensure our app is reactivated even on error
-                DispatchQueue.main.async {
-                    ourApp.activate(options: .activateIgnoringOtherApps)
-                }
+                self.conversation.messages.append(ChatMessage(role: "error", content: error.localizedDescription))
+                NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
+                return
             }
-            
-            isProcessing = false
+
+            self.appState.setExternalSelection(externalText, from: targetApp)
+            let formatInstruction = isSpreadsheet
+                ? "Preserve the table structure exactly, including tabs, commas, line breaks, and cell positions."
+                : ""
+            let prompt = """
+            Follow the user's instructions. Return only the replacement text, with no disclaimer or explanation.
+
+            \(formatInstruction)
+            Instructions: \(instructions)
+
+            Original text:
+            \(externalText)
+            """
+
+            do {
+                let response = try await provider.processText(
+                    systemPrompt: nil,
+                    userPrompt: prompt,
+                    images: [],
+                    videos: []
+                )
+                guard self.conversation.isCurrent(id) else { return }
+
+                if !response.images.isEmpty {
+                    self.lastGeneratedImage = response.images.last
+                    self.showImageResponse(response)
+                } else if response.isTruncated {
+                    self.conversation.messages.append(ChatMessage(
+                        role: "assistant",
+                        content: response.text,
+                        providerName: response.providerName,
+                        isTruncated: true
+                    ))
+                    self.conversation.messages.append(ChatMessage(
+                        role: "error",
+                        content: "The incomplete result was not pasted."
+                    ))
+                } else {
+                    do {
+                        try await AccessibilityHelper.replaceTextInCapturedTarget(
+                            with: response.text,
+                            target: replacementTarget
+                        )
+                    } catch {
+                        self.conversation.messages.append(ChatMessage(
+                            role: "assistant",
+                            content: response.text,
+                            providerName: response.providerName
+                        ))
+                        self.conversation.messages.append(ChatMessage(role: "error", content: error.localizedDescription))
+                    }
+                }
+            } catch {
+                guard self.conversation.isCurrent(id) else { return }
+                self.conversation.messages.append(ChatMessage(role: "error", content: error.localizedDescription))
+            }
+            NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
         }
     }
     
     /// Copies the chat conversation to the clipboard
     private func copyChatToClipboard() {
         // Format the conversation
-        let conversationText = chatMessages.map { item in
+        let conversationText = conversation.messages.map { item in
             item.message // Each message already includes the role prefix
         }.joined(separator: "\n\n")
         
@@ -1618,11 +1110,7 @@ struct PopupView: View {
         NSPasteboard.general.setString(conversationText, forType: .string)
         
         // Add a message to inform the user
-        chatMessages.append((
-            id: UUID(),
-            message: "System: Chat conversation copied to clipboard.",
-            images: []
-        ))
+        conversation.messages.append(ChatMessage(message: "System: Chat conversation copied to clipboard."))
     }
     
     private func saveImage(_ imageData: Data) {
@@ -1719,7 +1207,7 @@ struct AppSelectionView: View {
                         }
                         .contentShape(Rectangle()) // Make entire HStack tappable
                     }
-                    .glassButtonStyle(variant: .v8) // Use plain style for list items
+                    .glassButtonStyle(variant: .regular) // Use plain style for list items
                 }
             }
             .listStyle(InsetListStyle()) // Modern list style

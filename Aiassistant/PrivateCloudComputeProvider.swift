@@ -38,6 +38,7 @@ enum PrivateCloudComputeProviderError: LocalizedError {
     }
 }
 
+@MainActor
 final class PrivateCloudComputeProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
@@ -68,7 +69,7 @@ final class PrivateCloudComputeProvider: ObservableObject, AIProvider {
         return "Unavailable: \(model.availability)"
     }
 
-    private var currentTask: Task<AIResponse, Error>?
+    private let tasks = ProviderTaskRegistry<AIResponse>()
 
     func processText(
         systemPrompt: String?,
@@ -77,37 +78,21 @@ final class PrivateCloudComputeProvider: ObservableObject, AIProvider {
         videos: [Data]?
     ) async throws -> AIResponse {
         isProcessing = true
-        defer {
-            isProcessing = false
-            currentTask = nil
-        }
-
-        let promptText = Self.makePromptText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            videoCount: videos?.count ?? 0
-        )
-        let task = Task<AIResponse, Error> {
-            try Task.checkCancellation()
+        defer { isProcessing = !tasks.isEmpty }
+        return try await tasks.run {
+            let promptText = Self.makePromptText(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                videoCount: videos?.count ?? 0
+            )
             let output = try await Self.respond(to: promptText, images: images)
             try Task.checkCancellation()
-            return AIResponse(
-                text: output,
-                providerName: AIProviderKind.appleCloud.fullDisplayName
-            )
-        }
-        currentTask = task
-
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+            return AIResponse(text: output, providerName: AIProviderKind.appleCloud.fullDisplayName)
         }
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
+        tasks.cancelAll()
         isProcessing = false
     }
 

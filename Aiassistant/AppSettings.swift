@@ -52,7 +52,8 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
 class AppSettings: ObservableObject {
     nonisolated(unsafe) static let shared = AppSettings()
     
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private let credentialStore: any LocalServerCredentialStore
 
     // MARK: - Published Settings
     @Published var shortcutText: String {
@@ -84,8 +85,31 @@ class AppSettings: ObservableObject {
     }
 
     @Published var localOpenAIAPIKey: String {
-        didSet { defaults.set(localOpenAIAPIKey, forKey: "local_openai_api_key") }
+        didSet {
+            do {
+                try credentialStore.write(localOpenAIAPIKey)
+                defaults.removeObject(forKey: "local_openai_api_key")
+                localOpenAICredentialError = nil
+            } catch {
+                localOpenAICredentialError = "API key could not be saved to Keychain: \(error.localizedDescription)"
+            }
+        }
     }
+
+    @Published private(set) var localOpenAICredentialError: String?
+
+    @Published var localOpenAIMaxTokens: Int {
+        didSet {
+            let validValue = Self.validOutputTokenLimit(localOpenAIMaxTokens)
+            guard localOpenAIMaxTokens == validValue else {
+                localOpenAIMaxTokens = validValue
+                return
+            }
+            defaults.set(validValue, forKey: "local_openai_max_tokens")
+        }
+    }
+
+    static func validOutputTokenLimit(_ value: Int) -> Int { min(131_072, max(1, value)) }
 
     @Published var localOpenAIDisableThinking: Bool {
         didSet { defaults.set(localOpenAIDisableThinking, forKey: "local_openai_disable_thinking") }
@@ -105,8 +129,9 @@ class AppSettings: ObservableObject {
     }
 
     // MARK: - Init
-    private init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard, credentialStore: any LocalServerCredentialStore = KeychainLocalServerCredentialStore()) {
+        self.defaults = defaults
+        self.credentialStore = credentialStore
         let storedProvider = defaults.string(forKey: "selected_ai_provider") ?? ""
         let selectedProvider = storedProvider == "apple_pcc"
             ? AIProviderKind.appleCloud
@@ -122,7 +147,24 @@ class AppSettings: ObservableObject {
         ) ?? .gemma4_12B
         self.localOpenAIBaseURL = defaults.string(forKey: "local_openai_base_url") ?? LocalOpenAIEndpoint.defaultBaseURL
         self.localOpenAIModelID = defaults.string(forKey: "local_openai_model_id") ?? "local-model"
-        self.localOpenAIAPIKey = defaults.string(forKey: "local_openai_api_key") ?? ""
+        let legacyKey = defaults.string(forKey: "local_openai_api_key") ?? ""
+        do {
+            if let storedKey = try credentialStore.read() {
+                self.localOpenAIAPIKey = storedKey
+                defaults.removeObject(forKey: "local_openai_api_key")
+            } else {
+                self.localOpenAIAPIKey = legacyKey
+                if !legacyKey.isEmpty {
+                    try credentialStore.write(legacyKey)
+                    defaults.removeObject(forKey: "local_openai_api_key")
+                }
+            }
+        } catch {
+            self.localOpenAIAPIKey = legacyKey
+            self.localOpenAICredentialError = "API key migration to Keychain is pending: \(error.localizedDescription)"
+        }
+        let tokenLimit = defaults.object(forKey: "local_openai_max_tokens") as? Int ?? 1024
+        self.localOpenAIMaxTokens = Self.validOutputTokenLimit(tokenLimit)
         self.localOpenAIDisableThinking = defaults.bool(forKey: "local_openai_disable_thinking")
         self.customQuickActions = defaults.stringArray(forKey: "custom_quick_actions") ?? []
 
@@ -137,6 +179,7 @@ class AppSettings: ObservableObject {
     
     // MARK: - Convenience
     func resetAll() {
+        localOpenAIAPIKey = ""
         let domain = Bundle.main.bundleIdentifier!
         UserDefaults.standard.removePersistentDomain(forName: domain)
         UserDefaults.standard.synchronize()

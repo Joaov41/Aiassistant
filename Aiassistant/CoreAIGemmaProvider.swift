@@ -46,20 +46,29 @@ enum CoreAIGemmaProviderError: LocalizedError {
     }
 }
 
+@MainActor
 final class CoreAIGemmaProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
     private let baseURL = URL(string: "http://127.0.0.1:8080/v1")!
     private let visionBaseURL = URL(string: "http://127.0.0.1:8081/v1")!
     private let cloudFallbackProvider: PrivateCloudComputeProvider?
-    private var currentTask: Task<String, Error>?
+    private let settings: AppSettings
+    private let tasks = ProviderTaskRegistry<AIResponse>()
+    private let session: URLSession
 
-    init(cloudFallbackProvider: PrivateCloudComputeProvider? = nil) {
+    init(
+        cloudFallbackProvider: PrivateCloudComputeProvider? = nil,
+        settings: AppSettings = .shared,
+        session: URLSession = .shared
+    ) {
         self.cloudFallbackProvider = cloudFallbackProvider
+        self.settings = settings
+        self.session = session
     }
 
     var selectedModel: CoreAIGemmaModel {
-        AppSettings.shared.selectedCoreAIGemmaModel
+        settings.selectedCoreAIGemmaModel
     }
 
     var isAvailable: Bool {
@@ -97,102 +106,75 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
     func stopServers() async {
         await LocalMLXServerLauncher.shared.stopRunningServer()
         await LocalMLXVLMServerLauncher.shared.stopRunningServer()
-        LocalMLXPortCleaner.terminateStaleServer(on: 8080, executableName: "mlx_lm.server")
-        LocalMLXPortCleaner.terminateStaleServer(on: 8081, executableName: "mlx_vlm.server")
-    }
-
-    func processText(systemPrompt: String?, userPrompt: String, images: [Data], videos: [Data]?) async throws -> AIResponse {
-        try await processText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            images: images,
-            videos: videos,
-            streamingUpdate: nil
-        )
     }
 
     func processText(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        videos: [Data]?,
-        onUpdate: (@MainActor @escaping (String) -> Void)
+        videos: [Data]?
     ) async throws -> AIResponse {
-        try await processText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            images: images,
-            videos: videos,
-            streamingUpdate: onUpdate
+        try await processConversation(
+            AIConversationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                images: images,
+                videos: videos ?? []
+            ),
+            onUpdate: nil
         )
     }
 
-    private func processText(
-        systemPrompt: String?,
-        userPrompt: String,
-        images: [Data],
-        videos: [Data]?,
-        streamingUpdate: (@MainActor (String) -> Void)?
+    func processConversation(
+        _ request: AIConversationRequest,
+        onUpdate: (@MainActor (String) -> Void)?
     ) async throws -> AIResponse {
         isProcessing = true
-        defer { isProcessing = false }
+        defer { isProcessing = !tasks.isEmpty }
 
-        if Task.isCancelled {
-            throw CoreAIGemmaProviderError.cancelled
-        }
-
-        let prompt = Self.promptText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            images: images,
-            videos: videos
-        )
-        let model = selectedModel
-        let generationTask = Task {
-            if images.isEmpty && !model.usesVLMForText {
-                try await LocalMLXServerLauncher.shared.requireRunning(baseURL: self.baseURL)
-                return try await self.generate(prompt: prompt, model: model, streamingUpdate: streamingUpdate)
-            } else {
-                try await LocalMLXVLMServerLauncher.shared.requireRunning(baseURL: self.visionBaseURL)
-                return try await self.generateVision(prompt: prompt, model: model, images: images, streamingUpdate: streamingUpdate)
-            }
-        }
-        currentTask = generationTask
-        defer { currentTask = nil }
-
-        do {
-            let response = try await withTaskCancellationHandler {
-                try await generationTask.value
-            } onCancel: {
-                generationTask.cancel()
-            }
-
-            return AIResponse(
-                text: response,
-                providerName: "\(AIProviderKind.coreAIGemma.fullDisplayName) (\(model.fullDisplayName))"
+        return try await tasks.run {
+            let prompt = Self.promptText(
+                systemPrompt: request.systemPrompt,
+                userPrompt: request.promptWithHistory,
+                images: request.images,
+                videos: request.videos
             )
-        } catch {
-            if Self.shouldRouteToPrivateCloud(for: error), let cloudFallbackProvider {
-                generationTask.cancel()
-                let fallbackResponse = try await cloudFallbackProvider.processText(
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    images: images,
-                    videos: videos
-                )
+            let model = self.selectedModel
+            do {
+                let response: String
+                if request.images.isEmpty && !model.usesVLMForText {
+                    try await LocalMLXServerLauncher.shared.requireRunning(baseURL: self.baseURL)
+                    response = try await self.generate(prompt: prompt, model: model, streamingUpdate: onUpdate)
+                } else {
+                    try await LocalMLXVLMServerLauncher.shared.requireRunning(baseURL: self.visionBaseURL)
+                    response = try await self.generateVision(
+                        prompt: prompt,
+                        model: model,
+                        images: request.images,
+                        streamingUpdate: onUpdate
+                    )
+                }
                 return AIResponse(
-                    text: "\(Self.cloudFallbackNotice)\n\n\(fallbackResponse.text)",
-                    images: fallbackResponse.images,
-                    providerName: fallbackResponse.providerName
+                    text: response,
+                    providerName: "\(AIProviderKind.coreAIGemma.fullDisplayName) (\(model.fullDisplayName))"
+                )
+            } catch {
+                guard Self.shouldRouteToPrivateCloud(for: error), let cloudFallbackProvider = self.cloudFallbackProvider else {
+                    throw error
+                }
+                let fallback = try await cloudFallbackProvider.processConversation(request, onUpdate: nil)
+                return AIResponse(
+                    text: "\(Self.cloudFallbackNotice)\n\n\(fallback.text)",
+                    images: fallback.images,
+                    providerName: fallback.providerName,
+                    isTruncated: fallback.isTruncated
                 )
             }
-            throw error
         }
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
+        tasks.cancelAll()
         isProcessing = false
     }
 
@@ -352,7 +334,7 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
 
     private func nonStreamingCompletion(request: URLRequest, unavailableBaseURL: URL) async throws -> String {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             try validateHTTPResponse(response, data: data)
             let decoded: ChatCompletionResponse
             do {
@@ -381,7 +363,15 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
         streamingUpdate: (@MainActor (String) -> Void)?
     ) async throws -> String {
         do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                var body = Data()
+                for try await byte in bytes {
+                    if body.count >= 65_536 { break }
+                    body.append(byte)
+                }
+                try validateHTTPResponse(response, data: body)
+            }
             try validateHTTPResponse(response, data: nil)
 
             var accumulated = ""
@@ -408,7 +398,7 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
                     continue
                 }
                 accumulated += delta
-                await streamingUpdate?(accumulated)
+                streamingUpdate?(accumulated)
             }
             let trimmed = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
@@ -454,9 +444,17 @@ final class CoreAIGemmaProvider: ObservableObject, AIProvider {
             throw CoreAIGemmaProviderError.mlxInvalidResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(httpResponse.statusCode)"
-            throw CoreAIGemmaProviderError.mlxServerError(message)
+            throw Self.serverHTTPError(statusCode: httpResponse.statusCode, data: data)
         }
+    }
+
+    nonisolated static func serverHTTPError(statusCode: Int, data: Data?) -> CoreAIGemmaProviderError {
+        let message = data.flatMap { String(data: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let message, !message.isEmpty {
+            return .mlxServerError(message)
+        }
+        return .mlxServerError("HTTP \(statusCode)")
     }
 
     private static func pngData(from data: Data) -> Data? {
@@ -592,7 +590,6 @@ private actor LocalMLXServerLauncher {
 
         if process?.isRunning != true {
             LocalMLXLaunchLog.write("text server not running; starting \(model.mlxModelID) on port \(port)")
-            Self.terminateStaleServerIfNeeded(on: port)
             try startServer(model: model)
         }
 
@@ -709,9 +706,6 @@ private actor LocalMLXServerLauncher {
         return nil
     }
 
-    private static func terminateStaleServerIfNeeded(on port: Int) {
-        LocalMLXPortCleaner.terminateStaleServer(on: port, executableName: "mlx_lm.server")
-    }
 }
 
 private actor LocalMLXVLMServerLauncher {
@@ -746,7 +740,6 @@ private actor LocalMLXVLMServerLauncher {
 
         if process?.isRunning != true {
             LocalMLXLaunchLog.write("image server not running; starting \(model.mlxVisionModelID) on port \(port)")
-            Self.terminateStaleServerIfNeeded(on: port)
             try startServer(model: model)
         }
 
@@ -865,77 +858,6 @@ private actor LocalMLXVLMServerLauncher {
         return nil
     }
 
-    private static func terminateStaleServerIfNeeded(on port: Int) {
-        LocalMLXPortCleaner.terminateStaleServer(on: port, executableName: "mlx_vlm.server")
-    }
-}
-
-private enum LocalMLXPortCleaner {
-    static func terminateStaleServer(on port: Int, executableName: String) {
-        let pids = listeningPIDs(on: port)
-        guard !pids.isEmpty else {
-            return
-        }
-
-        var terminatedPIDs: [pid_t] = []
-        for pid in pids {
-            guard commandLine(for: pid).contains(executableName) else {
-                continue
-            }
-            Darwin.kill(pid, SIGTERM)
-            terminatedPIDs.append(pid)
-        }
-
-        guard !terminatedPIDs.isEmpty else {
-            return
-        }
-
-        Thread.sleep(forTimeInterval: 0.75)
-        for pid in terminatedPIDs where isProcessRunning(pid) {
-            Darwin.kill(pid, SIGKILL)
-        }
-    }
-
-    private static func listeningPIDs(on port: Int) -> [pid_t] {
-        let output = runCommand(
-            executablePath: "/usr/sbin/lsof",
-            arguments: ["-tiTCP:\(port)", "-sTCP:LISTEN"]
-        )
-        return output
-            .split(whereSeparator: \.isNewline)
-            .compactMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            .map { pid_t($0) }
-    }
-
-    private static func commandLine(for pid: pid_t) -> String {
-        runCommand(
-            executablePath: "/bin/ps",
-            arguments: ["-p", "\(pid)", "-ww", "-o", "command="]
-        )
-    }
-
-    private static func isProcessRunning(_ pid: pid_t) -> Bool {
-        Darwin.kill(pid, 0) == 0
-    }
-
-    private static func runCommand(executablePath: String, arguments: [String]) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = arguments
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8) ?? ""
-        } catch {
-            return ""
-        }
-    }
 }
 
 private enum LocalMLXHuggingFaceEnvironment {

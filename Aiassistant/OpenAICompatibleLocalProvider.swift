@@ -74,6 +74,8 @@ enum OpenAICompatibleLocalProviderError: LocalizedError {
     case httpError(Int, String)
     case decodingFailed(String)
     case emptyResponse
+    case reasoningOnly
+    case outputLimitWithoutAnswer
     case cancelled
     case requestFailed(String)
 
@@ -93,6 +95,10 @@ enum OpenAICompatibleLocalProviderError: LocalizedError {
             return "Local OpenAI response could not be decoded: \(message)"
         case .emptyResponse:
             return "Local OpenAI server returned an empty response."
+        case .reasoningOnly:
+            return "Local OpenAI returned reasoning but no final answer."
+        case .outputLimitWithoutAnswer:
+            return "Local OpenAI reached the output-token limit before returning an answer."
         case .cancelled:
             return "Local OpenAI request was cancelled."
         case .requestFailed(let message):
@@ -101,25 +107,37 @@ enum OpenAICompatibleLocalProviderError: LocalizedError {
     }
 }
 
+@MainActor
 final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
     @Published var isProcessing = false
 
     private let session: URLSession
-    private let requestState = LocalOpenAIRequestState()
+    private let settings: AppSettings
+    private var requests: [UUID: LocalOpenAIRequestState] = [:]
+    private var generationCount = 0
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .shared, settings: AppSettings = .shared) {
         self.session = session
+        self.settings = settings
     }
 
     func processText(systemPrompt: String?, userPrompt: String, images: [Data], videos: [Data]?) async throws -> AIResponse {
-        let settings = AppSettings.shared
+        try await processConversation(AIConversationRequest(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images, videos: videos ?? []), onUpdate: nil)
+    }
+
+    func processConversation(_ conversation: AIConversationRequest, onUpdate: (@MainActor (String) -> Void)?) async throws -> AIResponse {
+        try Task.checkCancellation()
         let modelID = settings.localOpenAIModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else {
             throw OpenAICompatibleLocalProviderError.missingModelID
         }
 
+        generationCount += 1
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            generationCount -= 1
+            isProcessing = generationCount > 0
+        }
 
         let baseURL = settings.localOpenAIBaseURL
         var request = URLRequest(url: try LocalOpenAIEndpoint.chatCompletionsURL(from: baseURL))
@@ -128,19 +146,20 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthorizationHeader(to: &request, apiKey: settings.localOpenAIAPIKey)
 
-        let imageDataURLs = try images.enumerated().map { index, data in
+        let imageDataURLs = try conversation.images.enumerated().map { index, data in
             try Self.imageDataURL(from: data, index: index)
         }
         let body = LocalOpenAIChatCompletionRequest(
             model: modelID,
             messages: Self.chatMessages(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
+                systemPrompt: conversation.systemPrompt,
+                userPrompt: conversation.userPrompt,
                 imageDataURLs: imageDataURLs,
-                videos: videos
+                videos: conversation.videos,
+                history: conversation.recentHistory
             ),
             temperature: 0,
-            maxTokens: 1024,
+            maxTokens: AppSettings.validOutputTokenLimit(settings.localOpenAIMaxTokens),
             stream: false,
             chatTemplateKwargs: settings.localOpenAIDisableThinking
                 ? LocalOpenAIChatTemplateKwargs(enableThinking: false)
@@ -150,21 +169,9 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
 
         do {
             let (data, response) = try await performDataRequest(request)
+            try Task.checkCancellation()
             try Self.validateHTTPResponse(response, data: data, serverName: "Local OpenAI")
-            let decoded: LocalOpenAIChatCompletionResponse
-            do {
-                decoded = try JSONDecoder().decode(LocalOpenAIChatCompletionResponse.self, from: data)
-            } catch {
-                throw OpenAICompatibleLocalProviderError.decodingFailed(Self.unreadableResponseMessage(from: data, decodingError: error))
-            }
-            guard let text = decoded.assistantText?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else {
-                throw OpenAICompatibleLocalProviderError.emptyResponse
-            }
-            return AIResponse(
-                text: text,
-                providerName: "\(AIProviderKind.localOpenAI.fullDisplayName) (\(modelID))"
-            )
+            return try Self.decodeCompletion(data, providerName: "\(AIProviderKind.localOpenAI.fullDisplayName) (\(modelID))")
         } catch let error as OpenAICompatibleLocalProviderError {
             throw error
         } catch let error as URLError {
@@ -177,12 +184,10 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
     }
 
     func cancel() {
-        requestState.cancel()
-        isProcessing = false
+        requests.values.forEach { $0.cancel() }
     }
 
     func testConnection() async throws -> LocalOpenAIConnectionResult {
-        let settings = AppSettings.shared
         let modelID = settings.localOpenAIModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         var request = URLRequest(url: try LocalOpenAIEndpoint.modelsURL(from: settings.localOpenAIBaseURL))
         request.httpMethod = "GET"
@@ -213,7 +218,7 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
         }
     }
 
-    static func modelIDs(fromModelsResponse data: Data) -> [String] {
+    nonisolated static func modelIDs(fromModelsResponse data: Data) -> [String] {
         guard let models = try? JSONDecoder().decode(LocalOpenAIModelsResponse.self, from: data) else {
             return []
         }
@@ -229,17 +234,20 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
         }
     }
 
-    static func chatMessages(
+    nonisolated static func chatMessages(
         systemPrompt: String?,
         userPrompt: String,
         imageDataURLs: [String],
-        videos: [Data]?
+        videos: [Data]?,
+        history: [AIConversationTurn] = []
     ) -> [LocalOpenAIChatMessage] {
         var messages: [LocalOpenAIChatMessage] = []
         if let systemPrompt = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
            !systemPrompt.isEmpty {
             messages.append(LocalOpenAIChatMessage(role: "system", content: .text(systemPrompt)))
         }
+
+        messages += history.map { LocalOpenAIChatMessage(role: $0.role.rawValue, content: .text($0.content)) }
 
         var prompt = userPrompt
         if let videos, !videos.isEmpty {
@@ -262,16 +270,24 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
     }
 
     private func applyAuthorizationHeader(to request: inout URLRequest, apiKey: String) {
+        guard let value = Self.authorizationHeaderValue(apiKey: apiKey) else { return }
+        request.setValue(value, forHTTPHeaderField: "Authorization")
+    }
+
+    nonisolated static func authorizationHeaderValue(apiKey: String) -> String? {
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedAPIKey.isEmpty else { return }
-        request.setValue("Bearer \(trimmedAPIKey)", forHTTPHeaderField: "Authorization")
+        return trimmedAPIKey.isEmpty ? nil : "Bearer \(trimmedAPIKey)"
     }
 
     private func performDataRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        let id = UUID()
+        let requestState = LocalOpenAIRequestState()
+        requests[id] = requestState
+        defer { requests[id] = nil }
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let task = session.dataTask(with: request) { data, response, error in
-                    self.requestState.clear()
                     if let error {
                         continuation.resume(throwing: error)
                         return
@@ -286,8 +302,27 @@ final class OpenAICompatibleLocalProvider: ObservableObject, AIProvider {
                 task.resume()
             }
         } onCancel: {
-            self.requestState.cancel()
+            requestState.cancel()
         }
+    }
+
+    nonisolated static func decodeCompletion(_ data: Data, providerName: String = AIProviderKind.localOpenAI.fullDisplayName) throws -> AIResponse {
+        let decoded: LocalOpenAIChatCompletionResponse
+        do {
+            decoded = try JSONDecoder().decode(LocalOpenAIChatCompletionResponse.self, from: data)
+        } catch {
+            throw OpenAICompatibleLocalProviderError.decodingFailed("Invalid chat completion JSON: \(error.localizedDescription)")
+        }
+        guard let choice = decoded.choices.first else {
+            throw OpenAICompatibleLocalProviderError.emptyResponse
+        }
+        let text = (choice.message?.content?.text ?? choice.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            if choice.finishReason == "length" { throw OpenAICompatibleLocalProviderError.outputLimitWithoutAnswer }
+            if choice.message?.reasoningContent?.isEmpty == false { throw OpenAICompatibleLocalProviderError.reasoningOnly }
+            throw OpenAICompatibleLocalProviderError.emptyResponse
+        }
+        return AIResponse(text: text, providerName: providerName, isTruncated: choice.finishReason == "length")
     }
 
     private static func validateHTTPResponse(_ response: URLResponse, data: Data, serverName: String) throws {
@@ -474,27 +509,15 @@ struct LocalOpenAIImageURL: Encodable {
 private struct LocalOpenAIChatCompletionResponse: Decodable {
     let choices: [Choice]
 
-    var assistantText: String? {
-        for choice in choices {
-            if let content = choice.message?.content?.text,
-               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return content
-            }
-            if let reasoning = choice.message?.reasoningContent,
-               !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return reasoning
-            }
-            if let text = choice.text,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return text
-            }
-        }
-        return nil
-    }
-
     struct Choice: Decodable {
         let message: Message?
         let text: String?
+        let finishReason: String?
+
+        enum CodingKeys: String, CodingKey {
+            case message, text
+            case finishReason = "finish_reason"
+        }
     }
 
     struct Message: Decodable {
@@ -553,26 +576,23 @@ private struct LocalOpenAIErrorResponse: Decodable {
     }
 }
 
-private final class LocalOpenAIRequestState {
+private final class LocalOpenAIRequestState: @unchecked Sendable {
     private let lock = NSLock()
     private var currentTask: URLSessionDataTask?
+    private var isCancelled = false
 
     func set(_ task: URLSessionDataTask) {
         lock.lock()
         currentTask = task
+        let shouldCancel = isCancelled
         lock.unlock()
-    }
-
-    func clear() {
-        lock.lock()
-        currentTask = nil
-        lock.unlock()
+        if shouldCancel { task.cancel() }
     }
 
     func cancel() {
         lock.lock()
         let task = currentTask
-        currentTask = nil
+        isCancelled = true
         lock.unlock()
         task?.cancel()
     }

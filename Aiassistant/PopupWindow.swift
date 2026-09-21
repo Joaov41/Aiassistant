@@ -75,9 +75,29 @@ class PopupWindow: NSWindow {
     }
 }
 
+enum WindowPlacement {
+    static func origin(
+        centeredOn mouseLocation: NSPoint,
+        windowSize: NSSize,
+        visibleFrame: NSRect,
+        margin: CGFloat = 12
+    ) -> NSPoint {
+        let minimumX = visibleFrame.minX + margin
+        let minimumY = visibleFrame.minY + margin
+        let maximumX = max(minimumX, visibleFrame.maxX - windowSize.width - margin)
+        let maximumY = max(minimumY, visibleFrame.maxY - windowSize.height - margin)
+        let desiredX = mouseLocation.x - windowSize.width / 2
+        let desiredY = mouseLocation.y - windowSize.height / 2
+
+        return NSPoint(
+            x: min(max(desiredX, minimumX), maximumX),
+            y: min(max(desiredY, minimumY), maximumY)
+        )
+    }
+}
+
 extension NSWindow {
-    func positionNearMouse() {
-        let mouseLocation = NSEvent.mouseLocation
+    func positionNearMouse(at mouseLocation: NSPoint = NSEvent.mouseLocation) {
         let screen = NSScreen.screens.first {
             NSMouseInRect(mouseLocation, $0.frame, false)
         }
@@ -85,21 +105,10 @@ extension NSWindow {
         if let screen = screen {
             contentView?.layoutSubtreeIfNeeded()
             let windowSize = self.frame.size
-            let visibleFrame = screen.visibleFrame
-            let margin: CGFloat = 12
-            let unclampedOrigin = NSPoint(
-                x: mouseLocation.x - windowSize.width / 2,
-                y: mouseLocation.y - windowSize.height / 2
-            )
-            let origin = NSPoint(
-                x: min(
-                    max(unclampedOrigin.x, visibleFrame.minX + margin),
-                    visibleFrame.maxX - windowSize.width - margin
-                ),
-                y: min(
-                    max(unclampedOrigin.y, visibleFrame.minY + margin),
-                    visibleFrame.maxY - windowSize.height - margin
-                )
+            let origin = WindowPlacement.origin(
+                centeredOn: mouseLocation,
+                windowSize: windowSize,
+                visibleFrame: screen.visibleFrame
             )
             self.setFrameOrigin(origin)
         }
