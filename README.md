@@ -1,239 +1,144 @@
-# Aiassistant
+# AI Assistant
 
-Aiassistant is an open-source, native macOS AI assistant built with SwiftUI.
+AI Assistant is an open-source macOS menu-bar app for working with AI across your Mac. Ask questions about selected text, rewrite it inside another app, or attach a document or window capture for context.
 
-It is designed to bring AI directly into your Mac workflow instead of limiting it to a standalone chat window. Aiassistant can work with selected text, screenshots, files, URLs, images, and other context from the apps you are already using, then answer questions or rewrite content in place.
+Choose Apple's on-device Foundation Model, native Apple Private Cloud Compute, local MLX Gemma, or an OpenAI-compatible server you run yourself.
 
-## Highlights
+[Website](https://ai.assistant.community/) · [Download](https://github.com/Joaov41/Aiassistant/releases/latest) · [MIT license](LICENSE)
 
-- Native macOS app built with SwiftUI
-- System-wide assistant available from a global keyboard shortcut
-- Chat and Rewrite in Place modes
-- Selected-text capture through macOS Accessibility APIs
-- Rewrite selected text directly inside the original app
-- Screenshot capture of other application windows with ScreenCaptureKit
-- Support for PDFs, text files, URLs, images, and video attachments
-- Multi-turn conversations with recent conversation context
-- Built-in and custom Quick Actions
-- Multiple private and local AI backends
-- No mandatory third-party cloud API account
+## Features
 
-## AI Providers
+- Chat with follow-up questions, Markdown responses, copy controls, and request cancellation.
+- Rewrite selected text in supported editors without copying the result back manually.
+- Quick Actions for summaries, key points, simpler wording, translation, and image descriptions, plus your own saved prompts.
+- Drag and drop PDFs, text and code files, RTF documents, EML email files, images, and web URLs into the assistant.
+- Capture another application's window and ask about the screenshot with a provider that supports images.
+- Standard, Gradient, and Glass themes, with selectable Liquid Glass styles.
 
-Aiassistant currently supports four provider paths.
+Attachment support depends on the provider. See [current limits](#current-limits) before using images or videos.
 
-### Apple Foundation Model — On Device
+## Requirements and installation
 
-Uses Apple's on-device Foundation Models runtime through `SystemLanguageModel.default`.
+The current source targets **macOS 27 or later**. Apple's on-device model requires an Apple Intelligence-capable Mac with Apple Intelligence enabled and its model assets ready. Local MLX requires an Apple silicon Mac and the optional runtime described below.
 
-- Runs locally on the Mac
-- No API key
-- No external AI service
-- Best suited to fast, private everyday tasks
+1. Download the app from the [Releases page](https://github.com/Joaov41/Aiassistant/releases/latest). For the v2.0.1 DMG, open it and copy Aiassistant to Applications.
+2. Launch the app. Its **AI** menu-bar item provides Settings and the MLX server controls.
+3. Grant **Accessibility** permission in System Settings → Privacy & Security → Accessibility for global activation, selected-text capture, and inline replacement.
+4. Grant **Screen Recording** permission when you want to capture application windows.
+5. Open Settings and choose an AI provider.
 
-### Apple Private Cloud Compute
+The [v2.0.1 public DMG](https://github.com/Joaov41/Aiassistant/releases/tag/v2.0.1) is a notarized and stapled Developer ID build. Its release notes state that Private Cloud Compute is unavailable in that distributed build. Native PCC support in the source requires an appropriately signed build, as explained below.
 
-Uses Apple's Private Cloud Compute model directly through the FoundationModels framework with `PrivateCloudComputeLanguageModel`.
+Python and Homebrew are only needed for the optional Local MLX runtime.
 
-This is **not** routed through the `fm` command-line tool or a third-party gateway.
+## Using the app
 
-The app checks for Apple's managed PCC entitlement at runtime:
+| Action | Control |
+| --- | --- |
+| Open or close the main assistant popup | Quickly double-tap **Left Shift** |
+| Open Quick Actions | Quickly triple-tap **Left Shift** |
+| Choose a provider or change appearance | AI menu-bar item → Settings |
+| Start or stop the app-managed MLX servers | AI menu-bar item → Start MLX Servers / Stop MLX Servers |
+
+To work with text, select it in another app before opening the assistant. Use **Chat** to discuss the selection, or **Rewrite** to enter an instruction such as "Make this email clearer" and replace the original selection.
+
+Quick Actions opened with triple-tap use inline replacement for text actions. You can also choose saved prompts from Rewrite mode.
+
+For documents and images, drag an attachment into the popup. Use **Capture Window** to select a visible application window. **New Chat** clears the current conversation and context; **Copy** copies the conversation.
+
+PDF import uses PDFKit text extraction, with Apple Vision OCR for pages that have no embedded text. EML import extracts email content for use as context.
+
+Inline replacement depends on the target editor's Accessibility and paste support. The app checks the captured target before pasting and avoids inserting responses marked as incomplete.
+
+## AI providers
+
+The names below match the provider picker in Settings.
+
+| Setting | Provider | Setup |
+| --- | --- | --- |
+| Local | Apple's on-device Foundation Model | Enable Apple Intelligence and wait for the model assets to be ready |
+| Apple Cloud | Apple Private Cloud Compute through FoundationModels | Internet access, an available PCC model, and Apple's managed entitlement in the app's signing profile |
+| Local MLX | Gemma through local MLX text and vision servers | Install the optional Python runtime, choose a model, and start the servers from the menu bar |
+| Local OpenAI | Your own OpenAI-compatible endpoint | Start your server and configure its base URL and model ID |
+
+### Native Private Cloud Compute
+
+Apple Cloud uses `PrivateCloudComputeLanguageModel()` and `LanguageModelSession` directly through Apple's **FoundationModels** framework.
+
+It requires the managed entitlement:
 
 ```text
 com.apple.developer.private-cloud-compute
 ```
 
-When the entitlement and model are available, requests are sent through Apple's native Private Cloud Compute path. PCC image understanding is also supported when the model reports vision capability.
+The app checks the entitlement in its running signature with `SecTaskCopyValueForEntitlement`, then checks model availability. Adding the key to an entitlements file alone does not grant PCC access: the signing profile must include Apple's approval for that entitlement.
 
-Apple Private Cloud Compute currently requires macOS 27 or later and an app build signed with the required managed entitlement.
+Still-image attachments are supported when the PCC model reports the `.vision` capability. Availability and signing errors are shown in Settings or in the response.
 
-### Local MLX Gemma
+### Privacy and fallback behavior
 
-Runs supported Gemma models locally on Apple silicon using MLX.
+On-device Apple inference and MLX inference run on your Mac. **Both providers can fall back to Apple Cloud when a request exceeds the local model's context limit.** That fallback uses the same native PCC provider and requires its entitlement and availability checks to pass.
 
-Aiassistant manages the local text and vision server processes when this provider is selected. This path is useful when you want a larger local model while keeping document and prompt content on your own Mac.
+The response includes a cloud-fallback notice and identifies the provider that answered. Selecting Local or Local MLX does not currently enforce a local-only policy; there is no privacy-policy switch in Settings.
 
-Supported model choices are exposed directly in Settings.
+Local OpenAI sends context to the endpoint you configure and has no PCC fallback. Use a server on this Mac for on-device processing. A remote base URL sends requests to that remote server.
 
-### Local OpenAI-Compatible Server
+Opening a web URL fetches that page over the network. MLX may also need internet access to download model weights before local inference can run.
 
-Aiassistant can connect to an OpenAI-compatible server running locally or on a network endpoint you control.
+## Optional Local MLX setup
 
-You can configure:
+Local MLX serves Gemma through separate Python text and vision runtimes. It is separate from Apple's on-device and PCC providers.
 
-- Base URL
-- Model ID
-- Optional API key
-- Output token limit
-- Thinking behavior
+### Install the runtime
 
-Credentials are stored in the macOS Keychain.
-
-This makes Aiassistant compatible with many self-hosted runtimes that expose an OpenAI-style chat-completions API.
-
-## System-Wide Workflow
-
-Aiassistant is designed to work around the content you are already viewing or editing.
-
-### Selected Text
-
-Select text in another application and invoke Aiassistant.
-
-The app can read the current selection using macOS Accessibility APIs and use it as conversation context.
-
-### Rewrite in Place
-
-Switch to **Rewrite in Place**, give Aiassistant an instruction, and the generated result can replace the original selected text inside the source application.
-
-The app verifies the Accessibility target before performing the replacement to reduce the risk of writing into the wrong field or window.
-
-### Screenshots
-
-Aiassistant uses ScreenCaptureKit to capture context from another application window.
-
-Screenshots can be attached to a conversation and sent to providers that support image understanding.
-
-### Files and Documents
-
-Files can be dropped or attached directly to the assistant.
-
-Current handling includes:
-
-- PDF text extraction
-- Text documents
-- Images
-- Video files
-- URLs
-
-PDF processing uses PDFKit, with additional Vision-based handling where needed.
-
-### URLs
-
-URLs can be supplied as context and Aiassistant can fetch their contents for use in a conversation or Quick Action.
-
-## Quick Actions
-
-Aiassistant includes context-aware Quick Actions for common tasks such as:
-
-- Summarize
-- Extract key points
-- Simplify text
-- Translate
-- Describe an image
-- Describe video content when supported by the active provider
-
-You can also create your own custom Quick Actions in Settings.
-
-Quick Actions can work from text, URLs, PDFs, images, and other supported context types. Text actions can also be used as part of the inline replacement workflow.
-
-## Conversations
-
-Aiassistant supports multi-turn conversations.
-
-Recent user and assistant turns are included in follow-up requests so questions such as:
-
-> What about the second point?
-
-can be resolved using the existing conversation context.
-
-Attached document, image, and other contextual data are managed separately from the conversation text so the active provider receives the relevant context for the current request.
-
-## Privacy
-
-Aiassistant gives you several ways to keep AI processing private:
-
-| Provider | Where processing happens |
-| --- | --- |
-| Apple Foundation Model | On device |
-| Apple Private Cloud Compute | Apple Private Cloud Compute |
-| Local MLX Gemma | On your Mac |
-| Local OpenAI-compatible server | Endpoint you configure |
-
-There is no requirement to use OpenAI, Anthropic, Google, or another commercial AI API.
-
-The local OpenAI-compatible provider stores its optional API credential in Keychain rather than UserDefaults.
-
-## Requirements
-
-Core requirements depend on the provider you want to use.
-
-- A recent version of macOS
-- Apple silicon is recommended and required for the intended MLX experience
-- Apple Intelligence availability is required for Apple's on-device model
-- Apple Private Cloud Compute requires macOS 27+ and Apple's managed PCC entitlement
-- Local MLX requires the MLX runtime described below
-
-## Download
-
-A notarized macOS build is available from the latest GitHub release:
-
-https://github.com/Joaov41/Aiassistant/releases/latest
-
-You can also build Aiassistant from source with Xcode.
-
-## Local MLX Setup
-
-Local MLX is optional. You do not need it to use Apple's on-device Foundation Model or Private Cloud Compute.
-
-The easiest way to install the known-good MLX runtime is:
-
-```zsh
-script/setup_mlx_runtime.sh
-```
-
-The setup creates local Python environments under:
-
-```text
-~/Library/Application Support/Aiassistant/
-```
-
-including the server binaries used by Aiassistant:
-
-```text
-~/Library/Application Support/Aiassistant/mlx-venv/bin/mlx_lm.server
-~/Library/Application Support/Aiassistant/mlx-vlm-venv/bin/mlx_vlm.server
-```
-
-### Manual MLX Setup
-
-If you prefer to install the dependencies manually, install the Xcode command-line tools first:
-
-```sh
-xcode-select --install
-```
-
-Install Python 3.12:
+From a checkout of this repository, with Homebrew installed:
 
 ```sh
 brew install python@3.12
+bash script/setup_mlx_runtime.sh
 ```
 
-Create the local environment:
+The setup script uses `/opt/homebrew/bin/python3.12` by default. If Python 3.12 is installed elsewhere, supply its path:
 
 ```sh
-mkdir -p "$HOME/Library/Application Support/Aiassistant"
-python3.12 -m venv "$HOME/Library/Application Support/Aiassistant/mlx-venv"
+PYTHON_BIN="/path/to/python3.12" bash script/setup_mlx_runtime.sh
 ```
 
-Install the MLX packages:
+The script recreates these virtual environments and installs the pinned package versions defined in [setup_mlx_runtime.sh](script/setup_mlx_runtime.sh):
 
-```sh
-"$HOME/Library/Application Support/Aiassistant/mlx-venv/bin/python" -m pip install --upgrade pip
-"$HOME/Library/Application Support/Aiassistant/mlx-venv/bin/python" -m pip install mlx-lm mlx-vlm huggingface-hub
-```
+- `~/Library/Application Support/Aiassistant/mlx-venv` for `mlx_lm.server`.
+- `~/Library/Application Support/Aiassistant/mlx-vlm-venv` for `mlx_vlm.server`.
 
-Check the installed server commands:
+Check the installed commands:
 
 ```sh
 "$HOME/Library/Application Support/Aiassistant/mlx-venv/bin/mlx_lm.server" --help
 "$HOME/Library/Application Support/Aiassistant/mlx-vlm-venv/bin/mlx_vlm.server" --help
 ```
 
-Once installed, open Aiassistant, go to Settings, select **Local MLX Gemma**, and choose a model. The app starts the required local server automatically when needed.
+### Choose a model and start the servers
 
-### Hugging Face Authentication
+1. Open Settings → **Local MLX**.
+2. Choose a Gemma model. **12B** is the default.
+3. Choose **Start MLX Servers** from the AI menu-bar item.
+4. Wait for the model to download or load, then send your request.
 
-Some models may require Hugging Face authentication.
+Selecting Local MLX or sending a request does **not** automatically start the servers. Use **Stop MLX Servers** to stop processes launched by the app. After changing models, choose Start MLX Servers again so the launcher can load the new selection.
+
+The first start may download weights from Hugging Face. Larger models need more memory and take longer to load.
+
+| Model picker label | Text model repository |
+| --- | --- |
+| Small E2B | `mlx-community/gemma-4-e2b-it-4bit` |
+| Small 4B | `mlx-community/gemma-4-e4b-it-4bit` |
+| 12B | `mlx-community/gemma-4-12B-it-4bit` |
+| 31B | `mlx-community/gemma-4-31b-it-4bit` |
+
+Small 4B uses the E4B vision server for both text and images. The other selections use their selected text model plus `mlx-community/gemma-4-E2B-it-qat-4bit` for images. An existing E2B snapshot may be used in place of its repository ID.
+
+The text endpoint is `http://127.0.0.1:8080/v1`; the vision endpoint is `http://127.0.0.1:8081/v1`. These ports must be available, or already served by the appropriate model.
+
+If a model requires Hugging Face authentication, save the token where the app's launcher expects it:
 
 ```sh
 mkdir -p "$HOME/Library/Application Support/Aiassistant/huggingface-token"
@@ -241,66 +146,68 @@ HF_TOKEN_PATH="$HOME/Library/Application Support/Aiassistant/huggingface-token/t
   "$HOME/Library/Application Support/Aiassistant/mlx-venv/bin/hf" auth login
 ```
 
-### Known-Good MLX Versions
+### Troubleshooting MLX
 
-The current setup script uses known-good combinations for the text and vision runtimes.
+If the app reports that a local server is unreachable, first check that you started it from the menu bar and installed the runtime. Inspect the logs for missing commands, package errors, model-download failures, or insufficient memory:
 
-Text / E2B:
-
-```text
-mlx-lm==0.31.2
-mlx==0.31.1
-transformers==5.12.1
-huggingface-hub==1.19.0
+```sh
+tail -n 160 /tmp/aiassistant-mlx-launcher.log
+tail -n 160 /tmp/aiassistant-mlx-server.log
+tail -n 160 /tmp/aiassistant-mlx-vlm-server.log
 ```
 
-Vision / E4B:
+The launcher can time out while a large model is downloading or loading. Check the logs and retry after the model is ready.
 
-```text
-mlx-vlm==0.6.3
-mlx-lm==0.31.3
-mlx==0.31.2
-transformers==5.12.1
+## Connecting an OpenAI-compatible server
+
+Start your server yourself; AI Assistant does not launch it.
+
+In Settings → **Local OpenAI**:
+
+1. Set the **Base URL**, including any API prefix your server requires. The default is `http://127.0.0.1:8080/v1`.
+2. Enter an **API Key** if your server requires one. The app stores this credential in macOS Keychain.
+3. Choose **Test & Load Models** to query the server's `/models` endpoint, then select a model or enter its ID manually.
+4. Set **Max Output Tokens** for the response length. **Disable Model Thinking** sends `enable_thinking=false` through chat-template arguments to servers that support it.
+
+Requests use the OpenAI-compatible `/chat/completions` API. Image inputs require a compatible vision model on the server.
+
+## Current limits
+
+- The on-device Apple provider currently processes text only; attached images are not analyzed by that provider.
+- PCC image understanding depends on the model reporting vision capability. Local MLX and Local OpenAI image support depends on the loaded model.
+- Video files can be imported, but none of the current providers implements video analysis.
+- Conversations are held in memory, with no saved chat library or restoration after relaunch. Use Copy to keep a conversation.
+- Routing currently consists of provider selection and the context-limit PCC fallback described above.
+
+## Building from source
+
+Use a Mac with Xcode and the macOS 27 SDK.
+
+```sh
+git clone https://github.com/Joaov41/Aiassistant.git
+cd Aiassistant
+open Aiassistant.xcodeproj
 ```
 
-### Troubleshooting Local MLX
+Let Xcode resolve the Swift package dependencies, then select the **Aiassistant** scheme.
 
-If Aiassistant reports that the local MLX server is unreachable, the most common cause is a Python/MLX package mismatch or a missing server binary.
+The checked-in project uses manual Apple Development signing and a PCC development provisioning profile. Configure your own development team, signing identity, and provisioning profile before building. PCC requires a profile approved for `com.apple.developer.private-cloud-compute`. For a build without PCC, remove that entitlement from the signing configuration and use an appropriate profile for your team.
 
-Check the logs:
+Once signing is configured, build and run from Xcode or use:
 
-```zsh
-tail -160 /tmp/aiassistant-mlx-server.log
-tail -160 /tmp/aiassistant-mlx-vlm-server.log
+```sh
+bash script/build_and_run.sh
 ```
 
-For the current E2B configuration, the expected Hugging Face snapshot location is:
+The helper builds the Debug app and launches it with Settings open.
 
-```text
-~/.cache/huggingface/hub/models--mlx-community--gemma-4-e2b-it-4bit/snapshots/99d9a53ff828d365a8ecae538e45f80a08d612cd
-```
+## Project structure
 
-## Project Structure
-
-- `Aiassistant/` — main macOS application
-- `AiassistantTests/` — unit and integration tests
-- `AiassistantUITests/` — UI tests
-- `LocalPackages/coreai-models/` — vendored CoreAI Swift package used by the local Gemma provider
-- `script/` — local runtime and development helper scripts
-
-## Development
-
-The app's provider layer currently separates the major execution paths into dedicated implementations:
-
-- `AppleIntelligenceProvider`
-- `PrivateCloudComputeProvider`
-- `CoreAIGemmaProvider`
-- `OpenAICompatibleLocalProvider`
-
-This allows the UI and conversation system to work across multiple backends while keeping provider-specific behavior isolated.
+- `Aiassistant/` contains the SwiftUI and AppKit app, provider implementations, Accessibility integration, attachment importers, and window management.
+- `AiassistantTests/` and `AiassistantUITests/` contain the test targets.
+- `Aiassistant.xcodeproj/` contains the Xcode project and package resolution.
+- `script/` contains the build/run helper and optional MLX runtime setup.
 
 ## License
 
-Aiassistant is released under the MIT License.
-
-You may use, modify, and redistribute it under the terms of [LICENSE](LICENSE). Copies or substantial portions must retain the copyright notice for John Val.
+This project is released under the [MIT License](LICENSE). You may share and modify it, but copies or substantial portions must keep the copyright notice for John Val.
